@@ -13,11 +13,11 @@ import manualsRouter from './routes/manuals.js';
 import messagesRouter from './routes/messages.js';
 import orderItemsRouter from './routes/order_items.js';
 import ordersRouter from './routes/orders.js';
-// import productsRouter from './routes/products.js';
+import productsRouter from './routes/products.js';
 // import recordingsRouter from './routes/recordings.js';
 // import satisfactionRouter from './routes/satisfactions.js';
 // import shipmentEventsRouter from './routes/shipment_events.js';
-// import shipmentsRouter from './routes/shipments.js';
+import shipmentsRouter from './routes/shipments.js';
 
 dotenv.config();
 const app = express();
@@ -37,11 +37,11 @@ app.use('/manuals', manualsRouter);
 app.use('/messages', messagesRouter);
 app.use('/order-items', orderItemsRouter);
 app.use('/orders', ordersRouter);
-// app.use('/products', productsRouter);
+app.use('/products', productsRouter);
 // app.use('/recordings', recordingsRouter);
 // app.use('/satisfactions', satisfactionRouter);
 // app.use('/shipment-events', shipmentEventsRouter);
-// app.use('/shipments', shipmentsRouter);
+app.use('/shipments', shipmentsRouter);
 
 // 서버 실행
 const PORT = process.env.PORT || 3000;
