@@ -1,2 +1,26 @@
+# Node
 node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+dist/
+build/
+
+# Env
 .env
+.env.*
+!.env.example
+
+src/infra/letsencrypt/
+src/infra/certbot/www/
+
+# Docker
+.docker/
+docker-data/
+
+# macOS
+.DS_Store
+
+# VSCode
+.vscode/
