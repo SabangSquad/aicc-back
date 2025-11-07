@@ -1,4 +1,4 @@
-name: CI Pipeline
+name: CI Pipeline - Merge
 
 on:
   push:
@@ -10,22 +10,15 @@ on:
       - "src/infra/nginx/nginx.conf"
       - "src/infra/redis/redis.conf"
       - "docker-compose.yml"
-  pull_request:
-    branches: [ main ]
-    paths:
-      - "Dockerfile"
-      - "src/**"
-      - "package*.json"
-      - "src/infra/nginx/nginx.conf"
-      - "src/infra/redis/redis.conf"
-      - "docker-compose.yml"
+    paths-ignore:
+      - "**.md"
+      - ".github/ISSUE_TEMPLATE/**"
 
 env:
-  IMAGE_NAME: einhn/aicc-back
   LATEST_TAG: arm64-latest
 
 jobs:
-  build:
+  build-and-push:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -50,15 +43,15 @@ jobs:
           password: ${{ secrets.REGISTRY_TOKEN }}
 
       # PR: build만, main push: build+push
-      - name: Build (PR) / Build & Push (main)
+      - name: Build & Push (ARM64)
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
           platforms: linux/arm64
-          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          push: true
           tags: |
-            ${{ env.IMAGE_NAME }}:${{ env.LATEST_TAG }}
-            ${{ env.IMAGE_NAME }}:arm64-${{ github.sha }}
+            ${{ vars.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}
+            ${{ vars.DOCKER_IMAGE }}:arm64-${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
