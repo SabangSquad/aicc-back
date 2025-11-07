@@ -13,14 +13,15 @@ const router = express.Router();
 
 /**
  * @swagger
- * /customers/{id}:
+ * /customers/{customer_id}:
  *   get:
- *     summary: "특정 고객 조회"
+ *     summary: "고객 정보 조회"
  *     tags:
  *       - Customers
+ *     description: 해당 고객의 정보를 조회합니다.
  *     parameters:
  *       - in: path
- *         name: id
+ *         name: customer_id
  *         required: true
  *         schema:
  *           type: integer
@@ -37,34 +38,44 @@ const router = express.Router();
  *                   type: integer
  *                 name:
  *                   type: string
+ *                 address:
+ *                   type: string
+ *                 phone:
+ *                   type: string
  *                 email:
  *                   type: string
  *                   format: email
- *                 phone:
+ *                 joined_at:
  *                   type: string
- *                 grade_id:
+ *                   format: date-time
+ *                 points:
  *                   type: integer
+ *                 grade:
+ *                   type: string
  *                   nullable: true
  *             example:
  *               customer_id: 1
  *               name: "홍길동"
- *               email: "hong@test.com"
+ *               address: "인천 연수구 송도 1동"
  *               phone: "010-1234-5678"
- *               grade_id: 1
+ *               email: "hong@test.com"
+ *               joined_at: "2025-09-01T04:08:31.231Z"
+ *               points: 1234
+ *               grade: "VIP"
  *       400:
  *         description: "잘못된 요청"
  *       404:
  *         description: "고객 없음"
  */
-router.get('/:id', async (req, res) => {
+router.get('/:customer_id', async (req, res) => {
   try {
-    const customerId = parseInt(req.params.id, 10);
+    const customerId = parseInt(req.params.customer_id, 10);
     if (Number.isNaN(customerId)) {
       return res.status(400).json({ error: '유효하지 않은 고객 ID입니다.' });
     }
 
     const result = await pool.query(
-      `SELECT customer_id, name, email, phone, grade_id
+      `SELECT customer_id, name, address, phone, email, joined_at, points, grade
        FROM customers
        WHERE customer_id = $1`,
       [customerId]
@@ -83,14 +94,15 @@ router.get('/:id', async (req, res) => {
 
 /**
  * @swagger
- * /customers/{id}:
+ * /customers/{customer_id}:
  *   patch:
  *     summary: "고객 정보 수정"
  *     tags:
  *       - Customers
+ *     description: 해당 고객의 정보를 수정합니다.
  *     parameters:
  *       - in: path
- *         name: id
+ *         name: customer_id
  *         required: true
  *         schema:
  *           type: integer
@@ -104,19 +116,25 @@ router.get('/:id', async (req, res) => {
  *             properties:
  *               name:
  *                 type: string
+ *               address:
+ *                 type: string
+ *               phone:
+ *                 type: string
  *               email:
  *                 type: string
  *                 format: email
- *               phone:
- *                 type: string
- *               grade_id:
+ *               points:
  *                 type: integer
+ *               grade:
+ *                 type: string
  *                 nullable: true
- *           example:
- *             name: "홍길동"
- *             email: "hong@test.com"
- *             phone: "010-1234-5678"
- *             grade_id: 1
+ *             example:
+ *               name: "홍길동"
+ *               address: "인천 연수구 송도 1동"
+ *               phone: "010-1234-5678"
+ *               email: "hong@test.com"
+ *               points: 1234
+ *               grade: "VIP"
  *     responses:
  *       200:
  *         description: "수정된 고객 정보"
@@ -129,13 +147,17 @@ router.get('/:id', async (req, res) => {
  *                   type: integer
  *                 name:
  *                   type: string
+ *                 address:
+ *                   type: string
+ *                 phone:
+ *                   type: string
  *                 email:
  *                   type: string
  *                   format: email
- *                 phone:
- *                   type: string
- *                 grade_id:
+ *                 points:
  *                   type: integer
+ *                 grade:
+ *                   type: string
  *                   nullable: true
  *       400:
  *         description: "잘못된 요청"
@@ -144,17 +166,21 @@ router.get('/:id', async (req, res) => {
  *       500:
  *         description: "서버 오류"
  */
-router.patch('/:id', async (req, res) => {
+router.patch('/:customer_id', async (req, res) => {
   try {
-    const customerId = parseInt(req.params.id, 10);
+    const customerId = parseInt(req.params.customer_id, 10);
     if (Number.isNaN(customerId)) {
       return res.status(400).json({ error: '유효하지 않은 고객 ID입니다.' });
     }
 
-    let { name, email, phone, grade_id } = req.body ?? {};
+    let { name, address, phone, email, points, grade } = req.body ?? {};
     if (name !== undefined) name = String(name).trim();
-    if (email !== undefined) email = String(email).trim();
+    if (address !== undefined) address = String(address).trim();
     if (phone !== undefined) phone = String(phone).trim();
+    if (email !== undefined) email = String(email).trim();
+    if (points !== undefined) points = String(points).trim();
+    if (grade !== undefined) grade = String(grade).trim();
+    
 
     if (email !== undefined && email.length > 0) {
       const simpleEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -163,15 +189,7 @@ router.patch('/:id', async (req, res) => {
       }
     }
 
-    if (grade_id !== undefined && grade_id !== null) {
-      const gid = Number.parseInt(grade_id, 10);
-      if (!Number.isInteger(gid) || gid < 0) {
-        return res.status(400).json({ error: 'grade_id는 0 이상의 정수이거나 null이어야 합니다.' });
-      }
-      grade_id = gid;
-    }
-
-    const fields = { name, email, phone, grade_id };
+    const fields = { name, address, phone, email, points, grade };
     const updates = [];
     const values = [];
     let idx = 1;
@@ -193,7 +211,7 @@ router.patch('/:id', async (req, res) => {
       UPDATE customers
       SET ${updates.join(', ')}
       WHERE customer_id = $${idx}
-      RETURNING customer_id, name, email, phone, grade_id
+      RETURNING name, address, phone, email, points, grade
     `;
     const result = await pool.query(sql, values);
 
@@ -212,9 +230,12 @@ router.patch('/:id', async (req, res) => {
  * @swagger
  * /customers/{customer_id}/cases:
  *   get:
- *     summary: "고객 상담 건 조회"
+ *     summary: "고객 상담 목록 조회"
  *     tags:
  *       - Customers
+ *     description: |
+ *       해당 고객의 상담 목록을 조회합니다.
+ *       - 상담 상태, 카테고리 필터를 제공합니다.
  *     parameters:
  *       - in: path
  *         name: customer_id
@@ -226,22 +247,14 @@ router.patch('/:id', async (req, res) => {
  *         name: status
  *         schema:
  *           type: string
- *           enum:
- *             - waiting
- *             - chatting
- *             - closed
- *         description: "상담 상태 코드 필터"
+ *           enum: ["대기", "상담", "종료"]
+ *         description: "상담 상태 필터"
  *       - in: query
- *         name: page
+ *         name: category
  *         schema:
- *           type: integer
- *           default: 1
- *       - in: query
- *         name: limit
- *         schema:
- *           type: integer
- *           default: 20
- *         description: "최대 100까지 허용"
+ *           type: string
+ *           enum: [취소, 교환, 반품, 반품비, 회수, 취소철회, 배송일정, 배송완료미수령, 상품파손, 해외배송, 상품누락, 주소검색, 배송비, 포장, 상품문의, 상품후기, 가입, 탈퇴, 개인정보설정, 로그인, 로그아웃, 인증, 비밀번호관리, 신용카드, 결제수단, 무통장입금, 할인쿠폰, 주문, 주문확인, 포인트]
+ *         description: 카테고리 필터
  *     responses:
  *       200:
  *         description: "상담 이력 목록"
@@ -255,36 +268,42 @@ router.patch('/:id', async (req, res) => {
  *                   items:
  *                     type: object
  *                     properties:
- *                       case_id:
+ *                       agent_id:
  *                         type: integer
+ *                         description: 상담원 ID
  *                       title:
  *                         type: string
+ *                         description: 상담 제목
  *                       status:
  *                         type: string
- *                         enum:
- *                           - waiting
- *                           - chatting
- *                           - closed
- *                       category_id:
- *                         type: integer
- *                       emotion_id:
- *                         type: integer
+ *                         description: 상담 상태
  *                       created_at:
  *                         type: string
  *                         format: date-time
+ *                         description: 상담 생성 시각
  *                       closed_at:
  *                         type: string
  *                         format: date-time
  *                         nullable: true
- *                 meta:
- *                   type: object
- *                   properties:
- *                     page:
- *                       type: integer
- *                     limit:
- *                       type: integer
- *                     total:
- *                       type: integer
+ *                         description: 상담 종료 시각
+ *                       content:
+ *                         type: string
+ *                         description: 상담 내용
+ *                       order_id:
+ *                         type: integer
+ *                         description: 주문 ID
+ *                       category:
+ *                         type: string
+ *                         description: 카테고리
+ *             example:
+ *               agent_id: 1
+ *               title: "환불하고 싶어요."
+ *               status: "대기"
+ *               created_at: "2025-09-01T04:08:31.231Z"
+ *               closed_at: null
+ *               content: "상품 품질이 정말 별로네요."
+ *               order_id: 1
+ *               category: "환불"
  *       400:
  *         description: "잘못된 요청"
  *       500:
@@ -292,58 +311,53 @@ router.patch('/:id', async (req, res) => {
  */
 router.get('/:customer_id/cases', async (req, res) => {
   try {
-    const customerId = parseInt(req.params.customer_id, 10);
-    if (Number.isNaN(customerId)) {
+    const customerId = Number.parseInt(req.params.customer_id, 10);
+    if (!Number.isInteger(customerId) || customerId <= 0) {
       return res.status(400).json({ error: '유효하지 않은 고객 ID입니다.' });
     }
 
-    const rawStatus = req.query.status;
-    const page = Math.max(1, parseInt(req.query.page ?? '1', 10));
-    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit ?? '20', 10)));
-    const offset = (page - 1) * limit;
+    const { status, category } = req.query;
 
     const where = ['c.customer_id = $1'];
     const params = [customerId];
     let idx = 2;
 
-    if (rawStatus !== undefined) {
-      const s = String(rawStatus).trim().toLowerCase();
-      const allowed = ['waiting', 'chatting', 'closed'];
-      if (!allowed.includes(s)) {
-        return res.status(400).json({ error: 'status는 waiting | chatting | closed 중 하나여야 합니다.' });
+    // status: 공백 방지 (+ 선택적으로 허용값 제한)
+    if (status !== undefined) {
+      const st = String(status).trim();
+      if (st.length === 0) {
+        return res.status(400).json({ error: 'status는 빈 문자열일 수 없습니다.' });
       }
+      const ALLOWED_STATUS = new Set(['대기', '상담', '종료']);
+      if (!ALLOWED_STATUS.has(st)) return res.status(400).json({ error: 'status는 대기, 상담, 종료 중 하나여야 합니다.' });
+
       where.push(`c.status = $${idx++}`);
-      params.push(s);
+      params.push(st);
     }
 
-    const whereSql = 'WHERE ' + where.join(' AND ');
+    // category: 문자열, 공백 방지
+    if (category !== undefined) {
+      const cat = String(category).trim();
+      if (cat.length === 0) {
+        return res.status(400).json({ error: 'category는 빈 문자열일 수 없습니다.' });
+      }
+      where.push(`c.category = $${idx++}`);
+      params.push(cat);
+    }
+
+    const whereSql = `WHERE ${where.join(' AND ')}`;
 
     const listSql = `
-      SELECT c.case_id, c.title, c.status, c.category_id, c.emotion_id, c.created_at, c.closed_at
+      SELECT c.agent_id, c.title, c.status, c.created_at, c.closed_at, c.content, c.order_id, c.category
       FROM cases c
       ${whereSql}
       ORDER BY c.created_at DESC
-      LIMIT ${limit} OFFSET ${offset}
-    `;
-    const countSql = `
-      SELECT COUNT(*) AS total
-      FROM cases c
-      ${whereSql}
     `;
 
-    const [listRes, countRes] = await Promise.all([
-      pool.query(listSql, params),
-      pool.query(countSql, params),
-    ]);
-
-    const total = Number(countRes.rows[0]?.total ?? 0);
-
-    return res.json({
-      data: listRes.rows,
-      meta: { page, limit, total },
-    });
+    const { rows } = await pool.query(listSql, params);
+    return res.json({ data: rows });
   } catch (err) {
-    console.error('고객 상담 이력 조회 오류:', err);
+    console.error('상담 목록 조회 오류:', err);
     return res.status(500).json({ error: '서버 오류가 발생했습니다.' });
   }
 });
@@ -352,9 +366,10 @@ router.get('/:customer_id/cases', async (req, res) => {
  * @swagger
  * /customers/{customer_id}/orders:
  *   get:
- *     summary: "고객 주문 내역 조회"
+ *     summary: "고객 주문 목록 조회"
  *     tags:
  *       - Customers
+ *     description: 해당 고객의 주문 목록을 조회합니다.
  *     parameters:
  *       - in: path
  *         name: customer_id
@@ -366,18 +381,8 @@ router.get('/:customer_id/cases', async (req, res) => {
  *         name: status
  *         schema:
  *           type: string
- *         description: "주문 상태 필터 (배송준비, 배송중, 완료)"
- *       - in: query
- *         name: page
- *         schema:
- *           type: integer
- *           default: 1
- *       - in: query
- *         name: limit
- *         schema:
- *           type: integer
- *           default: 20
- *         description: "최대 100까지 허용"
+ *           enum: ["준비", "배송", "완료"]
+ *         description: "주문 상태 필터"
  *     responses:
  *       200:
  *         description: "주문 목록"
@@ -393,22 +398,18 @@ router.get('/:customer_id/cases', async (req, res) => {
  *                     properties:
  *                       order_id:
  *                         type: integer
- *                       customer_id:
- *                         type: integer
  *                       status:
  *                         type: string
- *                       created_at:
+ *                       ordered_at:
  *                         type: string
  *                         format: date-time
- *                 meta:
- *                   type: object
- *                   properties:
- *                     page:
- *                       type: integer
- *                     limit:
- *                       type: integer
- *                     total:
- *                       type: integer
+ *                       total_price:
+ *                         type: integer
+ *             example:
+ *               order_id: 1
+ *               status: "준비"
+ *               ordered_at: "2025-09-01T04:08:31.231Z"
+ *               total_price: 4000
  *       400:
  *         description: "잘못된 요청"
  *       500:
@@ -416,53 +417,43 @@ router.get('/:customer_id/cases', async (req, res) => {
  */
 router.get('/:customer_id/orders', async (req, res) => {
   try {
-    const customerId = parseInt(req.params.customer_id, 10);
-    if (Number.isNaN(customerId)) {
+    const customerId = Number.parseInt(req.params.customer_id, 10);
+    if (!Number.isInteger(customerId) || customerId <= 0) {
       return res.status(400).json({ error: '유효하지 않은 고객 ID입니다.' });
     }
 
     const { status } = req.query;
-    const page = Math.max(1, parseInt(req.query.page ?? '1', 10));
-    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit ?? '20', 10)));
-    const offset = (page - 1) * limit;
 
     const where = ['o.customer_id = $1'];
     const params = [customerId];
     let idx = 2;
 
-    if (status) {
-      where.push('o.status = $' + idx++);
-      params.push(String(status));
+    // status: 공백 방지 (+ 선택적으로 허용값 제한)
+    if (status !== undefined) {
+      const st = String(status).trim();
+      if (st.length === 0) {
+        return res.status(400).json({ error: 'status는 빈 문자열일 수 없습니다.' });
+      }
+      const ALLOWED_STATUS = new Set(['준비', '배송', '완료']);
+      if (!ALLOWED_STATUS.has(st)) return res.status(400).json({ error: 'status는 준비, 배송, 완료 중 하나여야 합니다.' });
+
+      where.push(`o.status = $${idx++}`);
+      params.push(st);
     }
 
-    const whereSql = 'WHERE ' + where.join(' AND ');
+    const whereSql = `WHERE ${where.join(' AND ')}`;
 
     const listSql = `
-      SELECT o.order_id, o.customer_id, o.status, o.ordered_at
+      SELECT o.order_id, o.ordered_at, o.status, o.total_price
       FROM orders o
       ${whereSql}
       ORDER BY o.ordered_at DESC
-      LIMIT ${limit} OFFSET ${offset}
-    `;
-    const countSql = `
-      SELECT COUNT(*) AS total
-      FROM orders o
-      ${whereSql}
     `;
 
-    const [listRes, countRes] = await Promise.all([
-      pool.query(listSql, params),
-      pool.query(countSql, params),
-    ]);
-
-    const total = Number(countRes.rows[0]?.total ?? 0);
-
-    return res.json({
-      data: listRes.rows,
-      meta: { page, limit, total },
-    });
+    const { rows } = await pool.query(listSql, params);
+    return res.json({ data: rows });
   } catch (err) {
-    console.error('고객 주문 내역 조회 오류:', err);
+    console.error('주문 목록 조회 오류:', err);
     return res.status(500).json({ error: '서버 오류가 발생했습니다.' });
   }
 });
@@ -472,8 +463,8 @@ router.get('/:customer_id/orders', async (req, res) => {
  * /customers/{customer_id}/orders:
  *   post:
  *     summary: "고객 주문 추가"
- *     tags:
- *       - Customers
+ *     tags: [Customers]
+ *     description: 해당 고객의 주문을 추가합니다.
  *     parameters:
  *       - in: path
  *         name: customer_id
@@ -483,56 +474,61 @@ router.get('/:customer_id/orders', async (req, res) => {
  *         description: "고객 ID"
  *     responses:
  *       201:
- *         description: "주문이 생성되었습니다."
+ *         description: "주문 생성 완료"
  *         content:
  *           application/json:
  *             schema:
  *               type: object
- *               description: "DB 기본값이 적용된 주문 레코드"
- *       400: { description: "잘못된 요청" }
- *       404: { description: "고객 없음" }
- *       500: { description: "서버 오류" }
+ *               properties:
+ *                 order_id:
+ *                   type: integer
+ *                   description: 주문 ID
+ *                 ordered_at:
+ *                   type: string
+ *                   format: date-time
+ *                   description: 주문 일자
+ *                 status:
+ *                   type: string
+ *                   description: 주문 상태
+ *                 total_price:
+ *                   type: integer
+ *                   description: 총합 가격
+ *             example:
+ *               order_id: 1
+ *               ordered_at: "2025-09-01T04:08:31.231Z"
+ *               status: "대기"
+ *               total_price: 4000
+ *       400:
+ *         description: "잘못된 요청"
+ *       404:
+ *         description: "해당 고객을 찾을 수 없음"
+ *       500:
+ *         description: "서버 오류"
  */
 
 router.post('/:customer_id/orders', async (req, res) => {
-  const client = await pool.connect();
+  // path 파라미터만 사용
+  const customerId = Number.parseInt(req.params.customer_id, 10);
+  if (!Number.isInteger(customerId) || customerId <= 0) {
+    return res.status(400).json({ error: '유효하지 않은 고객 ID입니다.' });
+  }
+
   try {
-    const customerId = parseInt(req.params.customer_id, 10);
-    if (Number.isNaN(customerId)) {
-      client.release();
-      return res.status(400).json({ error: '유효하지 않은 고객 ID입니다.' });
-    }
-
-    await client.query('BEGIN');
-
-    const exist = await client.query(
-      'SELECT 1 FROM customers WHERE customer_id = $1',
-      [customerId]
-    );
-    if (exist.rowCount === 0) {
-      await client.query('ROLLBACK');
-      client.release();
-      return res.status(404).json({ error: '고객을 찾을 수 없습니다.' });
-    }
-
-    const insert = await client.query(
+    // customer_id만으로 주문 생성
+    const { rows } = await pool.query(
       `INSERT INTO orders (customer_id)
        VALUES ($1)
-       RETURNING *`,                 
+       RETURNING order_id, ordered_at, status, total_price`,
       [customerId]
     );
 
-    await client.query('COMMIT');
-
-    return res.status(201).json(insert.rows[0]);
+    return res.status(201).json(rows[0]);
   } catch (err) {
-    try { await pool.query('ROLLBACK'); } catch (_) {}
-    console.error('주문 생성 오류:', err);
-    return res.status(500).json({ error: '서버 오류가 발생했습니다.' });
-  } finally {
-    try { client.release(); } catch (_) {}
+    return res.status(500).json({ error: '서버 오류' });
   }
 });
+
+
 
 
 export default router;

@@ -15,233 +15,15 @@ const STATUS_COL = 'status';
  *     description: "상담 케이스 관리 API"
  */
 
-/** 정렬 함수 */
-const getOrderByClause = (sortBy, order) => {
-  const validOrder = (order && String(order).toLowerCase() === 'asc') ? 'ASC' : 'DESC';
-  switch (sortBy) {
-    case 'category':
-      return `ORDER BY category_id ${validOrder}`;
-    case 'satisfaction':
-      return `ORDER BY emotion_id ${validOrder}`;
-    case 'status':
-      // waiting < chatting < closed
-      return `
-        ORDER BY CASE ${STATUS_COL}
-          WHEN 'waiting' THEN 1
-          WHEN 'chatting' THEN 2
-          WHEN 'closed' THEN 3
-          ELSE 4
-        END ${validOrder},
-        created_at DESC
-      `;
-    case 'createdAt':
-    default:
-      return `ORDER BY created_at ${validOrder}`;
-  }
-};
-
-/**
- * @swagger
- * /cases/by-agent/{agent_id}:
- *   get:
- *     summary: "특정 상담원의 상담 목록 조회"
- *     tags:
- *       - Cases
- *     parameters:
- *       - in: path
- *         name: agent_id
- *         required: true
- *         schema:
- *           type: integer
- *         description: "상담원 ID"
- *       - in: query
- *         name: sortBy
- *         schema:
- *           type: string
- *           enum: [category, createdAt, status, satisfaction]
- *         description: "정렬 기준"
- *       - in: query
- *         name: order
- *         schema:
- *           type: string
- *           enum: [asc, desc]
- *           default: desc
- *         description: "정렬 순서"
- *     responses:
- *       200:
- *         description: "상담원 별 상담 기록 조회에 성공했습니다."
- *         content:
- *           application/json:
- *             schema:
- *               type: array
- *               items:
- *                 type: object
- *                 properties:
- *                   case_id:
- *                     type: integer
- *                     description: "상담 고유 ID"
- *                   customer_id:
- *                     type: integer
- *                     description: "고객 ID"
- *                   agent_id:
- *                     type: integer
- *                     description: "상담원 ID"
- *                   title:
- *                     type: string
- *                     description: "상담 제목"
- *                   category_id:
- *                     type: integer
- *                     description: "카테고리 ID"
- *                   status:
- *                     type: string
- *                     description: "상담 상태 코드 (waiting, chatting, closed)"
- *                     example: "waiting"
- *                   created_at:
- *                     type: string
- *                     format: date-time
- *                     description: "생성 일시"
- *                   closed_at:
- *                     type: string
- *                     format: date-time
- *                     description: "종료 일시"
- *                     nullable: true
- *                   memo:
- *                     type: string
- *                     description: "상담 메모"
- *                     nullable: true
- *                   emotion_id:
- *                     type: integer
- *                     description: "고객 만족도 점수 (예 1~5)"
- *                     nullable: true
- *                   content:
- *                     type: string
- *                     description: "상담 내용"
- *                   order_id:
- *                     type: integer
- *                     description: "관련 주문 ID"
- *                     nullable: true
- *       500:
- *         description: "서버 오류"
- */
-router.get('/by-agent/:agent_id', async (req, res) => {
-  try {
-    const { agent_id } = req.params;
-    const { sortBy, order } = req.query;
-
-    const query = `SELECT * FROM cases WHERE agent_id = $1 ${getOrderByClause(sortBy, order)}`;
-    const { rows } = await pool.query(query, [agent_id]);
-    res.status(200).json(rows);
-  } catch (err) {
-    console.error('상담원별 상담 목록 조회 오류:', err);
-    res.status(500).json({ error: '서버 오류가 발생했습니다.' });
-  }
-});
-
-/**
- * @swagger
- * /cases/by-customer/{customer_id}:
- *   get:
- *     summary: "특정 고객의 상담 목록 조회"
- *     tags:
- *       - Cases
- *     parameters:
- *       - in: path
- *         name: customer_id
- *         required: true
- *         schema:
- *           type: integer
- *         description: "고객 ID"
- *       - in: query
- *         name: sortBy
- *         schema:
- *           type: string
- *           enum: [category, createdAt, status, satisfaction]
- *         description: "정렬 기준"
- *       - in: query
- *         name: order
- *         schema:
- *           type: string
- *           enum: [asc, desc]
- *           default: desc
- *         description: "정렬 순서"
- *     responses:
- *       200:
- *         description: "특정 고객의 상담 목록 조회에 성공했습니다."
- *         content:
- *           application/json:
- *             schema:
- *               type: array
- *               items:
- *                 type: object
- *                 properties:
- *                   case_id:
- *                     type: integer
- *                     description: "상담 고유 ID"
- *                   customer_id:
- *                     type: integer
- *                     description: "고객 ID"
- *                   agent_id:
- *                     type: integer
- *                     description: "상담원 ID"
- *                   title:
- *                     type: string
- *                     description: "상담 제목"
- *                   category_id:
- *                     type: integer
- *                     description: "카테고리 ID"
- *                   status:
- *                     type: string
- *                     description: "상담 상태 코드 (waiting, chatting, closed)"
- *                     example: "chatting"
- *                   created_at:
- *                     type: string
- *                     format: date-time
- *                     description: "생성 일시"
- *                   closed_at:
- *                     type: string
- *                     format: date-time
- *                     description: "종료 일시"
- *                     nullable: true
- *                   memo:
- *                     type: string
- *                     description: "상담 메모"
- *                     nullable: true
- *                   emotion_id:
- *                     type: integer
- *                     description: "고객 만족도 점수 (예 1~5)"
- *                     nullable: true
- *                   content:
- *                     type: string
- *                     description: "상담 내용"
- *                   order_id:
- *                     type: integer
- *                     description: "관련 주문 ID"
- *                     nullable: true
- *       500:
- *         description: "서버 오류"
- */
-router.get('/by-customer/:customer_id', async (req, res) => {
-  try {
-    const { customer_id } = req.params;
-    const { sortBy, order } = req.query;
-
-    const query = `SELECT * FROM cases WHERE customer_id = $1 ${getOrderByClause(sortBy, order)}`;
-    const { rows } = await pool.query(query, [customer_id]);
-    res.status(200).json(rows);
-  } catch (err) {
-    console.error('고객별 상담 목록 조회 오류:', err);
-    res.status(500).json({ error: '서버 오류가 발생했습니다.' });
-  }
-});
 
 /**
  * @swagger
  * /cases:
  *   post:
- *     summary: "신규 상담 생성 (상담원 자동 배정)"
+ *     summary: "신규 상담 생성"
  *     tags:
  *       - Cases
- *     description: "상담 신청 시 맡고 있는 상담 건수가 가장 적은 상담원에게 자동으로 배정합니다."
+ *     description: "신규 상담을 생성합니다. 맡고 있는 상담 건수가 가장 적은 상담원에게 자동으로 배정됩니다."
  *     requestBody:
  *       required: true
  *       content:
@@ -251,15 +33,15 @@ router.get('/by-customer/:customer_id', async (req, res) => {
  *             required:
  *               - customer_id
  *               - title
- *               - category_id
+ *               - category
  *               - content
  *             properties:
  *               customer_id:
  *                 type: integer
  *               title:
  *                 type: string
- *               category_id:
- *                 type: integer
+ *               category:
+ *                 type: string
  *               content:
  *                 type: string
  *               order_id:
@@ -267,7 +49,7 @@ router.get('/by-customer/:customer_id', async (req, res) => {
  *           example:
  *             customer_id: 1
  *             title: "환불 문의"
- *             category_id: 3
+ *             category: "환불"
  *             content: "제품이 마음에 들지 않습니다."
  *             order_id: 10
  *     responses:
@@ -290,13 +72,14 @@ router.get('/by-customer/:customer_id', async (req, res) => {
  *                 title:
  *                   type: string
  *                   description: "상담 제목"
- *                 category_id:
- *                   type: integer
- *                   description: "카테고리 ID"
+ *                 category:
+ *                   type: string
+ *                   description: "카테고리"
  *                 status:
  *                   type: string
- *                   description: "상담 상태 코드 (waiting, chatting, closed)"
- *                   example: "waiting"
+ *                   enum: [대기, 상담, 종료]
+ *                   description: "상담 상태"
+ *                   example: "대기"
  *                 created_at:
  *                   type: string
  *                   format: date-time
@@ -310,9 +93,9 @@ router.get('/by-customer/:customer_id', async (req, res) => {
  *                   type: string
  *                   description: "상담 메모"
  *                   nullable: true
- *                 emotion_id:
- *                   type: integer
- *                   description: "고객 만족도 점수 (예 1~5)"
+ *                 emotion:
+ *                   type: string
+ *                   description: "고객 감정"
  *                   nullable: true
  *                 content:
  *                   type: string
@@ -329,12 +112,12 @@ router.get('/by-customer/:customer_id', async (req, res) => {
  *         description: "서버 오류"
  */
 router.post('/', async (req, res) => {
-  const { customer_id, title, category_id, content, order_id } = req.body;
+  const { customer_id, title, category, content, order_id } = req.body;
 
-  if (!customer_id || !title || !category_id || !content) {
+  if (!customer_id || !title || !category || !content) {
     return res
       .status(400)
-      .json({ error: '필수 입력값(customer_id, title, category_id, content)이 누락되었습니다.' });
+      .json({ error: '필수 입력값(customer_id, title, category, content)이 누락되었습니다.' });
   }
 
   try {
@@ -346,11 +129,11 @@ router.post('/', async (req, res) => {
     }
 
     const insertQuery = `
-      INSERT INTO cases (customer_id, agent_id, title, category_id, content, order_id, ${STATUS_COL}, created_at)
-      VALUES ($1, $2, $3, $4, $5, $6, 'waiting', NOW())
+      INSERT INTO cases (customer_id, agent_id, title, category, content, order_id, status, created_at)
+      VALUES ($1, $2, $3, $4, $5, $6, '대기', NOW())
       RETURNING *;
     `;
-    const values = [customer_id, agentIdToAssign, title, category_id, content, order_id];
+    const values = [customer_id, agentIdToAssign, title, category, content, order_id];
 
     const { rows } = await pool.query(insertQuery, values);
     res.status(201).json(rows[0]);
@@ -360,11 +143,17 @@ router.post('/', async (req, res) => {
   }
 });
 
+
 /**
  * @swagger
- * /cases/{case_id}/memo:
+ * /cases/{case_id}:
  *   patch:
- *     summary: "상담 메모 추가"
+ *     summary: "상담 정보 수정"
+ *     description: |
+ *       해당 상담을 수정합니다.
+ *       - 요청 바디의 `closed_at`은 **무시**됩니다.
+ *       - `status`가 "종료"로 바뀌면 서버가 `closed_at = NOW()`로 자동 설정합니다.
+ *       - "대기" 또는 "상담"으로 바뀌면 `closed_at = NULL`(재오픈)로 처리합니다.
  *     tags:
  *       - Cases
  *     parameters:
@@ -377,93 +166,54 @@ router.post('/', async (req, res) => {
  *     requestBody:
  *       required: true
  *       content:
- *         application/json:
+ *         application/merge-patch+json:
  *           schema:
  *             type: object
- *             required:
- *               - memo
- *             properties:
- *               memo:
- *                 type: string
- *                 description: "상담 메모 내용"
- *           example:
- *             memo: "야간에 재통화 요청"
- *     responses:
- *       200:
- *         description: "메모가 추가되었습니다."
- *       400:
- *         description: "잘못된 요청"
- *       404:
- *         description: "상담을 찾을 수 없습니다."
- *       500:
- *         description: "서버 오류"
- */
-router.patch('/:case_id/memo', async (req, res) => {
-  try {
-    const caseId = Number.parseInt(req.params.case_id, 10);
-    if (Number.isNaN(caseId)) {
-      return res.status(400).json({ error: '유효하지 않은 상담 ID입니다.' });
-    }
-    let { memo } = req.body ?? {};
-    if (typeof memo !== 'string' || memo.trim().length === 0) {
-      return res.status(400).json({ error: 'memo 필드는 비어있지 않은 문자열이어야 합니다.' });
-    }
-    memo = memo.trim();
-
-    const result = await pool.query(
-      `UPDATE cases
-       SET memo = $1
-       WHERE case_id = $2
-       RETURNING case_id, memo`,
-      [memo, caseId]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: '상담을 찾을 수 없습니다.' });
-    }
-    return res.status(200).json(result.rows[0]);
-  } catch (err) {
-    console.error('상담 메모 추가 오류:', err);
-    return res.status(500).json({ error: '서버 오류가 발생했습니다.' });
-  }
-});
-
-/**
- * @swagger
- * /cases/{case_id}/status:
- *   patch:
- *     summary: "상담 상태 수정"
- *     description: "상태 값은 waiting, chatting, closed 중 하나여야 합니다."
- *     tags:
- *       - Cases
- *     parameters:
- *       - in: path
- *         name: case_id
- *         required: true
- *         schema:
- *           type: integer
- *         description: "상담 ID"
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - status
  *             properties:
  *               status:
  *                 type: string
- *                 enum:
- *                   - waiting
- *                   - chatting
- *                   - closed
- *                 description: "상담 상태 코드"
- *           example:
- *             status: "chatting"
+ *                 description: '상담 상태: "대기" | "상담" | "종료"'
+ *                 example: "종료"
+ *               memo:
+ *                 type: string
+ *                 description: "메모 (비어있지 않은 문자열)"
+ *                 example: "11/6 15시에 재통화 약속"
+ *               emotion:
+ *                 type: string
+ *                 description: "고객 감정 (비어있지 않은 문자열)"
+ *                 example: "평온"
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               status:
+ *                 type: string
+ *               memo:
+ *                 type: string
+ *               emotion:
+ *                 type: string
  *     responses:
  *       200:
- *         description: "상태가 수정되었습니다."
+ *         description: "수정된 상담 정보"
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 case_id:
+ *                   type: integer
+ *                 status:
+ *                   type: string
+ *                 memo:
+ *                   type: string 
+ *                   nullable: true
+ *                 emotion:
+ *                   type: string
+ *                   nullable: true
+ *                 closed_at:
+ *                   type: string
+ *                   format: date-time
+ *                   nullable: true
  *       400:
  *         description: "잘못된 요청"
  *       404:
@@ -471,55 +221,120 @@ router.patch('/:case_id/memo', async (req, res) => {
  *       500:
  *         description: "서버 오류"
  */
-
-router.patch('/:case_id/status', async (req, res) => {
+router.patch('/:case_id', async (req, res) => {
   try {
     const caseId = Number.parseInt(req.params.case_id, 10);
     if (Number.isNaN(caseId)) {
       return res.status(400).json({ error: '유효하지 않은 상담 ID입니다.' });
     }
 
-    const { status } = req.body ?? {};
-    const allowed = ['waiting', 'chatting', 'closed'];
-    const s = typeof status === 'string' ? status.trim().toLowerCase() : '';
-    if (!allowed.includes(s)) {
-      return res.status(400).json({ error: 'status는 waiting | chatting | closed 중 하나여야 합니다.' });
+    const body = req.body || {};
+    const hasStatus  = Object.prototype.hasOwnProperty.call(body, 'status');
+    const hasMemo    = Object.prototype.hasOwnProperty.call(body, 'memo');
+    const hasEmotion = Object.prototype.hasOwnProperty.call(body, 'emotion');
+
+    if (!hasStatus && !hasMemo && !hasEmotion) {
+      return res.status(400).json({
+        error: '수정할 필드를 본문에 포함하세요. (status, memo, emotion 중 최소 1개)'
+      });
     }
 
-    const setClosed = (s === 'closed'); // ← boolean으로 분리
+    // (선택) 허용 키 화이트리스트
+    const allowedKeys = new Set(['status', 'memo', 'emotion']);
+    const extras = Object.keys(body).filter(k => !allowedKeys.has(k));
+    if (extras.length) {
+      return res.status(400).json({ error: `지원하지 않는 필드: ${extras.join(', ')}` });
+    }
+
+    const sets = [];
+    const params = [];
+
+    // status
+    if (hasStatus) {
+      if (typeof body.status !== 'string') {
+        return res.status(400).json({ error: 'status는 문자열이어야 합니다.' });
+      }
+      const s = body.status.trim();
+      const allowed = ['대기', '상담', '종료'];
+      if (!allowed.includes(s)) {
+        return res.status(400).json({ error: 'status는 대기 | 상담 | 종료 중 하나여야 합니다.' });
+      }
+
+      // 1) 컬럼 대입용 파라미터 (varchar로 추론됨)
+      params.push(s);                         // -> $1
+      sets.push(`status = $${params.length}`);
+
+      // 2) 비교용 파라미터는 "별도의 번호"로 다시 추가 + ::text 캐스팅
+      params.push(s);                         // -> $2
+      const cmpIdx = params.length;
+      sets.push(`
+        closed_at = CASE
+          WHEN $${cmpIdx}::text = '종료' AND status <> '종료' THEN NOW()
+          WHEN $${cmpIdx}::text IN ('대기','상담') THEN NULL
+          ELSE closed_at
+        END
+      `);
+      // 주의: 위 CASE에서 사용하는 status는 "테이블의 기존 값"입니다.
+    }
+
+    // memo (null 허용: 삭제 의도)
+    if (hasMemo) {
+      if (body.memo === null) {
+        sets.push(`memo = NULL`);
+      } else if (typeof body.memo === 'string' && body.memo.trim().length > 0) {
+        params.push(body.memo.trim());
+        sets.push(`memo = $${params.length}`);
+      } else {
+        return res.status(400).json({ error: 'memo는 비어있지 않은 문자열이거나 null이어야 합니다.' });
+      }
+    }
+
+    // emotion (null 허용)
+    if (hasEmotion) {
+      if (body.emotion === null) {
+        sets.push(`emotion = NULL`);
+      } else if (typeof body.emotion === 'string' && body.emotion.trim().length > 0) {
+        params.push(body.emotion.trim());
+        sets.push(`emotion = $${params.length}`);
+      } else {
+        return res.status(400).json({ error: 'emotion은 비어있지 않은 문자열이거나 null이어야 합니다.' });
+      }
+    }
 
     const sql = `
       UPDATE cases
-      SET ${STATUS_COL} = $1,
-          closed_at = CASE WHEN $2 THEN NOW() ELSE closed_at END
-      WHERE case_id = $3
-      RETURNING case_id, ${STATUS_COL} AS status
+      SET ${sets.join(', ')}
+      WHERE case_id = $${params.length + 1}
+      RETURNING case_id, status, memo, emotion, closed_at
     `;
-    const { rows } = await pool.query(sql, [s, setClosed, caseId]);
+    params.push(caseId);
 
-    if (rows.length === 0) {
+    const { rows, rowCount } = await pool.query(sql, params);
+    if (!rowCount) {
       return res.status(404).json({ error: '상담을 찾을 수 없습니다.' });
     }
     return res.status(200).json(rows[0]);
   } catch (err) {
-    console.error('상담 상태 수정 오류:', err);
+    console.error('상담 수정 오류:', err);
     return res.status(500).json({ error: '서버 오류가 발생했습니다.' });
   }
 });
 
 
+
+
 /**
  * @swagger
- * /cases/{case_id}/satisfaction:
+ * /cases/{case_id}/satisfactions:
  *   post:
  *     summary: "상담 만족도 추가"
- *     tags:
- *       - Cases
+ *     tags: [Cases]
+ *     description: 해당 상담에 만족도를 추가합니다.
  *     parameters:
  *       - in: path
  *         name: case_id
  *         required: true
- *         schema:
+ *         schema: 
  *           type: integer
  *         description: "상담 ID"
  *     requestBody:
@@ -528,77 +343,364 @@ router.patch('/:case_id/status', async (req, res) => {
  *         application/json:
  *           schema:
  *             type: object
- *             required:
- *               - score
+ *             required: [score]
  *             properties:
  *               score:
  *                 type: integer
  *                 minimum: 1
  *                 maximum: 5
- *                 description: "만족도 점수 (예 1~5)"
  *               comment:
  *                 type: string
- *                 description: "코멘트"
  *           example:
  *             score: 4
  *             comment: "친절하게 안내해주셨어요."
  *     responses:
  *       201:
  *         description: "만족도가 등록되었습니다."
- *       400:
+ *       400: 
  *         description: "잘못된 요청"
- *       404:
+ *       404: 
  *         description: "상담을 찾을 수 없습니다."
- *       500:
+ *       500:   
  *         description: "서버 오류"
  */
-router.post('/:case_id/satisfaction', async (req, res) => {
-  const client = await pool.connect();
+
+router.post('/:case_id/satisfactions', async (req, res) => {
   try {
     const caseId = Number.parseInt(req.params.case_id, 10);
     if (Number.isNaN(caseId)) {
-      client.release();
       return res.status(400).json({ error: '유효하지 않은 상담 ID입니다.' });
     }
 
     const { score, comment } = req.body ?? {};
     const nScore = Number.parseInt(score, 10);
     if (!Number.isInteger(nScore) || nScore < 1 || nScore > 5) {
-      client.release();
       return res.status(400).json({ error: 'score는 1~5 범위의 정수여야 합니다.' });
     }
-    const commentStr = comment === undefined ? null : String(comment).trim();
 
-    await client.query('BEGIN');
+    // 빈 문자열은 NULL로 정규화
+    const normalizedComment =
+      comment === undefined || comment === null
+        ? null
+        : String(comment).trim() || null;
 
-    const exist = await client.query('SELECT 1 FROM cases WHERE case_id = $1', [caseId]);
-    if (exist.rowCount === 0) {
-      await client.query('ROLLBACK');
-      client.release();
+    // 한 번의 쿼리로 존재 확인 + INSERT
+    const sql = `
+      INSERT INTO satisfactions (case_id, score, comment, created_at)
+      SELECT $1, $2, $3, NOW()
+      WHERE EXISTS (SELECT 1 FROM cases WHERE case_id = $1)
+      RETURNING satisfaction_id, case_id, score, comment, created_at
+    `;
+    const { rows } = await pool.query(sql, [caseId, nScore, normalizedComment]);
+
+    if (rows.length === 0) {
       return res.status(404).json({ error: '상담을 찾을 수 없습니다.' });
     }
 
-    const insert = await client.query(
-      `INSERT INTO satisfactions (case_id, score, comment, created_at)
-       VALUES ($1, $2, $3, NOW())
-       RETURNING case_id, score, comment, created_at`,
-      [caseId, nScore, commentStr]
-    );
-
-    await client.query(
-      `UPDATE cases SET emotion_id = $1 WHERE case_id = $2`,
-      [nScore, caseId]
-    );
-
-    await client.query('COMMIT');
-
-    return res.status(201).json(insert.rows[0]);
+    return res.status(201).json(rows[0]);
   } catch (err) {
-    try { await pool.query('ROLLBACK'); } catch (e) { /* ignore */ }
     console.error('만족도 등록 오류:', err);
     return res.status(500).json({ error: '서버 오류가 발생했습니다.' });
-  } finally {
-    try { client.release(); } catch (e) { /* ignore */ }
+  }
+});
+
+/**
+ * @swagger
+ * /cases/{case_id}/messages:
+ *   get:
+ *     summary: "상담 메시지 조회"
+ *     description:
+ *       해당 상담의 메시지를 조회합니다.
+ *     tags:
+ *       - Cases
+ *     parameters:
+ *       - in: path
+ *         name: case_id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: "상담 ID"
+ *     responses:
+ *       200:
+ *         description: "상담 메시지"
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message_id:
+ *                   type: integer
+ *                   description: 메시지 ID
+ *                 case_id:
+ *                   type: integer
+ *                   description: 상담 ID
+ *                 occurred_at:
+ *                   type: string 
+ *                   format: date-time
+ *                   description: 메시지 발송 시각
+ *                 content:
+ *                   type: string
+ *                   description: 메시지 내용
+ *                 speaker:
+ *                   type: string
+ *                   description: 발화자
+ *             example:
+ *               message_id: 1
+ *               case_id: 1
+ *               occurred_at: "2025-09-01T04:08:31.231Z"
+ *               content: "상품이 마음에 들지 않아요."
+ *               speaker: "고객"
+ *       400:
+ *         description: "잘못된 요청"
+ *       404:
+ *         description: "메시지 없음"
+ *       500:
+ *         description: "서버 오류"
+ */
+
+router.route('/:case_id/messages')
+  .get(async (req, res) => {
+    try {
+      const caseId = Number.parseInt(req.params.case_id, 10);
+      if (Number.isNaN(caseId)) {
+        return res.status(400).json({ error: '유효하지 않은 상담 ID입니다.' });
+      }
+
+      const result = await pool.query(
+        'SELECT message_id, case_id, occurred_at, content, speaker FROM messages WHERE case_id = $1',
+        [caseId]
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({ error: '메시지를 찾을 수 없습니다.' });
+      }
+
+      return res.json(result.rows);
+    } catch (err) {
+      console.error('메시지 조회 오류:', err);
+      return res.status(500).json({ error: '서버 오류가 발생했습니다.' });
+    }
+  })
+
+
+/**
+ * @swagger
+ * /cases/{case_id}/messages:
+ *   post:
+ *     summary: "상담 메시지 추가"
+ *     tags: [Cases]
+ *     description: 해당 상담에 메시지를 추가합니다.
+ *     parameters:
+ *       - in: path
+ *         name: case_id
+ *         required: true
+ *         schema: 
+ *           type: integer
+ *         description: "상담 ID"
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [content, speaker]
+ *             properties:
+ *               content:
+ *                 type: string
+ *               speaker:
+ *                 type: string
+ *           example:
+ *             content: "문의가 접수되었습니다."
+ *             speaker: "챗봇"
+ *     responses:
+ *       201:
+ *         description: "메시지 발송 완료"
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 occurred_at: 
+ *                   type: string
+ *                   format: date-time
+ *                   description: 메시지 발송 시각
+ *                 content:
+ *                   type: string
+ *                   description: 메시지 내용
+ *                 speaker:
+ *                   type: string
+ *                   description: 발화자
+ *       400: 
+ *         description: "잘못된 요청"
+ *       404: 
+ *         description: "해당 상담을 찾을 수 없음"
+ *       500:   
+ *         description: "서버 오류"
+ */
+
+router.post('/:case_id/messages', async (req, res) => {
+
+  const caseId = Number.parseInt(req.params.case_id, 10);
+  if (Number.isNaN(caseId)) {
+    return res.status(400).json({ error: '유효하지 않은 상담 ID입니다.' });
+  }
+
+  const { content, speaker } = req.body;
+
+  if (typeof content !== 'string' || content.trim().length === 0) {
+    return res.status(400).json({ error: 'content는 비어 있을 수 없습니다.' });
+  }
+  if (typeof speaker !== 'string' || speaker.trim().length === 0) {
+    return res.status(400).json({ error: 'speaker는 비어 있을 수 없습니다.' });
+  }
+
+  try {
+
+    const { rows } = await pool.query(
+      `INSERT INTO messages (case_id, content, speaker)
+       VALUES ($1, $2, $3)
+       RETURNING occurred_at, content, speaker`,
+      [caseId, content, speaker]
+    );
+
+    res.status(201).json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: '서버 내부 오류가 발생했습니다.' });
+  }
+});
+
+/**
+ * @swagger
+ * /cases/{case_id}/recordings:
+ *   get:
+ *     summary: "상담 녹취 조회"
+ *     description:
+ *       해당 상담의 녹취를 조회합니다.
+ *     tags:
+ *       - Cases
+ *     parameters:
+ *       - in: path
+ *         name: case_id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: "상담 ID"
+ *     responses:
+ *       200:
+ *         description: "상담 녹취"
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 file_url:
+ *                   type: string 
+ *                   description: 녹취 파일 저장 URL
+ *             example:
+ *               file_url: "http://dummyimage.com/243x100.png/5fa2dd/ffffff"
+ *       400:
+ *         description: "잘못된 요청"
+ *       404:
+ *         description: "녹취 없음"
+ *       500:
+ *         description: "서버 오류"
+ */
+
+router.route('/:case_id/recordings')
+  .get(async (req, res) => {
+    try {
+      const caseId = Number.parseInt(req.params.case_id, 10);
+      if (Number.isNaN(caseId)) {
+        return res.status(400).json({ error: '유효하지 않은 상담 ID입니다.' });
+      }
+
+      const result = await pool.query(
+        'SELECT file_url FROM recordings WHERE case_id = $1',
+        [caseId]
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({ error: '메시지를 찾을 수 없습니다.' });
+      }
+
+      return res.json(result.rows);
+    } catch (err) {
+      console.error('메시지 조회 오류:', err);
+      return res.status(500).json({ error: '서버 오류가 발생했습니다.' });
+    }
+  })
+
+
+/**
+ * @swagger
+ * /cases/{case_id}/recordings:
+ *   post:
+ *     summary: "상담 녹취 추가"
+ *     tags: [Cases]
+ *     description: 해당 상담에 녹취를 추가합니다.
+ *     parameters:
+ *       - in: path
+ *         name: case_id
+ *         required: true
+ *         schema: 
+ *           type: integer
+ *         description: "상담 ID"
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [file_url]
+ *             properties:
+ *               file_url:
+ *                 type: string
+ *           example:
+ *             file_url: "http://dummyimage.com/243x100.png/5fa2dd/ffffff"
+ *     responses:
+ *       201:
+ *         description: "녹취 저장 완료"
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 file_url: 
+ *                   type: string
+ *                   description: 녹취 파일 저장 URL
+ *       400: 
+ *         description: "잘못된 요청"
+ *       404: 
+ *         description: "해당 상담을 찾을 수 없음"
+ *       500:   
+ *         description: "서버 오류"
+ */
+
+router.post('/:case_id/recordings', async (req, res) => {
+
+  const caseId = Number.parseInt(req.params.case_id, 10);
+  if (Number.isNaN(caseId)) {
+    return res.status(400).json({ error: '유효하지 않은 상담 ID입니다.' });
+  }
+
+  const { file_url } = req.body;
+
+  if (typeof file_url !== 'string' || file_url.trim().length === 0) {
+    return res.status(400).json({ error: 'file_url는 비어 있을 수 없습니다.' });
+  }
+
+  try {
+
+    const { rows } = await pool.query(
+      `INSERT INTO recordings (case_id, file_url)
+       VALUES ($1, $2)
+       RETURNING file_url`,
+      [caseId, file_url]
+    );
+
+    res.status(201).json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: '서버 내부 오류가 발생했습니다.' });
   }
 });
 

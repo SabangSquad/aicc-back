@@ -13,14 +13,15 @@ const router = express.Router();
 
 /**
  * @swagger
- * /orders/{id}:
+ * /orders/{order_id}:
  *   get:
- *     summary: "특정 주문 조회"
+ *     summary: "주문 정보 조회"
  *     tags:
  *       - Orders
+ *     description: 해당 주문의 정보를 조회합니다.
  *     parameters:
  *       - in: path
- *         name: id
+ *         name: order_id
  *         required: true
  *         schema:
  *           type: integer
@@ -35,22 +36,26 @@ const router = express.Router();
  *               properties:
  *                 order_id:
  *                   type: integer
+ *                   description: 주문 ID
  *                 customer_id:
  *                   type: integer
- *                 status:
- *                   type: string
- *                 total_amount:
- *                   type: number
- *                   format: float
+ *                   description: 고객 ID
  *                 ordered_at:
  *                   type: string
  *                   format: date-time
+ *                   description: 주문일
+ *                 status:
+ *                   type: string
+ *                   description: 주문 상태
+ *                 total_price:
+ *                   type: integer
+ *                   description: 전체 가격
  *             example:
  *               order_id: 1
  *               customer_id: 1
  *               status: "완료"
- *               total_amount: 20000
- *               ordered_at: "2025-10-09T03:00:00Z"
+ *               total_price: 20000
+ *               ordered_at: "2025-09-01T04:08:31.231Z"
  *       400:
  *         description: "잘못된 요청"
  *       404:
@@ -58,12 +63,13 @@ const router = express.Router();
  *       500:
  *         description: "서버 오류"
  *   patch:
- *     summary: "특정 주문 상태 변경"
+ *     summary: "주문 상태 수정"
+ *     description: 해당 주문의 상태를 수정합니다.
  *     tags:
  *       - Orders
  *     parameters:
  *       - in: path
- *         name: id
+ *         name: order_id
  *         required: true
  *         schema:
  *           type: integer
@@ -79,7 +85,8 @@ const router = express.Router();
  *             properties:
  *               status:
  *                 type: string
- *                 description: "새 주문 상태"
+ *                 enum: ["준비", "배송", "완료"]
+ *                 description: "주문 상태"
  *           example:
  *             status: "완료"
  *     responses:
@@ -90,10 +97,20 @@ const router = express.Router();
  *             schema:
  *               type: object
  *               properties:
- *                 order_id:
- *                   type: integer
+ *                 ordered_at:
+ *                   type: string
+ *                   format: date-time
+ *                   description: 주문일
  *                 status:
  *                   type: string
+ *                   description: 주문 상태
+ *                 total_price:
+ *                   type: integer
+ *                   description: 전체 가격
+ *             example:
+ *               ordered_at: "2025-09-01T04:08:31.231Z"
+ *               status: "준비"
+ *               total_price: 5000
  *       400:
  *         description: "잘못된 요청"
  *       404:
@@ -101,7 +118,8 @@ const router = express.Router();
  *       500:
  *         description: "서버 오류"
  *   delete:
- *     summary: "특정 주문 삭제"
+ *     summary: "주문 삭제"
+ *     description: 해당 주문을 삭제합니다. 주문 내 상품도 삭제됩니다.
  *     tags:
  *       - Orders
  *     parameters:
@@ -122,53 +140,16 @@ const router = express.Router();
  *         description: "서버 오류"
  */
 
-/**
- * @swagger
- * /orders/{id}/status:
- *   get:
- *     summary: "주문 상태 조회"
- *     description: "해당 주문의 상태만 반환합니다."
- *     tags:
- *       - Orders
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: integer
- *         description: "주문 ID"
- *     responses:
- *       200:
- *         description: "주문 상태"
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 order_id:
- *                   type: integer
- *                 status:
- *                   type: string
- *             example:
- *               order_id: 1
- *               status: "완료"
- *       400:
- *         description: "잘못된 요청"
- *       404:
- *         description: "주문 없음"
- *       500:
- *         description: "서버 오류"
- */
 
-router.get('/:id', async (req, res) => {
+router.get('/:order_id', async (req, res) => {
   try {
-    const orderId = parseInt(req.params.id, 10);
+    const orderId = parseInt(req.params.order_id, 10);
     if (Number.isNaN(orderId)) {
       return res.status(400).json({ error: '유효하지 않은 주문 ID입니다.' });
     }
 
     const sql = `
-      SELECT order_id, customer_id, status, total_amount, ordered_at
+      SELECT order_id, customer_id, ordered_at, status, total_price
       FROM orders
       WHERE order_id = $1
     `;
@@ -183,28 +164,9 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-router.get('/:id/status', async (req, res) => {
+router.patch('/:order_id', async (req, res) => {
   try {
-    const orderId = parseInt(req.params.id, 10);
-    if (Number.isNaN(orderId)) {
-      return res.status(400).json({ error: '유효하지 않은 주문 ID입니다.' });
-    }
-
-    const sql = `SELECT order_id, status FROM orders WHERE order_id = $1`;
-    const { rows } = await pool.query(sql, [orderId]);
-    if (rows.length === 0) {
-      return res.status(404).json({ error: '주문을 찾을 수 없습니다.' });
-    }
-    return res.json(rows[0]);
-  } catch (err) {
-    console.error('주문 상태 조회 오류:', err);
-    return res.status(500).json({ error: '서버 오류가 발생했습니다.' });
-  }
-});
-
-router.patch('/:id', async (req, res) => {
-  try {
-    const orderId = parseInt(req.params.id, 10);
+    const orderId = parseInt(req.params.order_id, 10);
     if (Number.isNaN(orderId)) {
       return res.status(400).json({ error: '유효하지 않은 주문 ID입니다.' });
     }
@@ -216,7 +178,7 @@ router.patch('/:id', async (req, res) => {
     const newStatus = status.trim();
 
     
-    const allowed = ['배송준비', '배송중', '완료'];
+    const allowed = ['준비', '배송', '완료'];
     if (!allowed.includes(newStatus)) {
       return res.status(400).json({ error: `status는 ${allowed.join(', ')} 중 하나여야 합니다.` });
     }
@@ -238,22 +200,196 @@ router.patch('/:id', async (req, res) => {
   }
 });
 
-router.delete('/:id', async (req, res) => {
+router.delete('/:order_id', async (req, res) => {
+  const orderId = parseInt(req.params.order_id, 10);
+  if (Number.isNaN(orderId)) {
+    return res.status(400).json({ error: '유효하지 않은 주문 ID입니다.' });
+  }
+
+  const client = await pool.connect();
   try {
-    const orderId = parseInt(req.params.id, 10);
+    await client.query('BEGIN');
+
+    // 1) 자식 먼저 삭제
+    await client.query('DELETE FROM order_items WHERE order_id = $1', [orderId]);
+
+    // 2) 주문 삭제 (없으면 404)
+    const delOrder = await client.query('DELETE FROM orders WHERE order_id = $1', [orderId]);
+    if (delOrder.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: '주문을 찾을 수 없습니다.' });
+    }
+
+    await client.query('COMMIT');
+    return res.json({ message: `order ${orderId} deleted` });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('주문 삭제 오류:', err);
+    return res.status(500).json({ error: '서버 오류가 발생했습니다.' });
+  } finally {
+    client.release();
+  }
+});
+
+/**
+ * @swagger
+ * /orders/{order_id}/order-items:
+ *   get:
+ *     summary: "주문 상품 조회"
+ *     tags:
+ *       - Orders
+ *     description: 해당 주문에 포함된 상품들을 조회합니다.
+ *     parameters:
+ *       - in: path
+ *         name: order_id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: "주문 ID"
+ *     responses:
+ *       200:
+ *         description: "주문 정보"
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 order_item_id:
+ *                   type: integer
+ *                   description: 주문 품목 ID
+ *                 product_id:
+ *                   type: integer
+ *                   description: 상품 ID
+ *                 quantity:
+ *                   type: integer
+ *                   description: 주문 수량
+ *                 total_price:
+ *                   type: integer
+ *                   description: 전체 가격
+ *             example:
+ *               order_item_id: 1
+ *               product_id: 1
+ *               quantity: 3
+ *               total_price: 25000
+ *       400:
+ *         description: "잘못된 요청"
+ *       404:
+ *         description: "주문 품목 없음"
+ *       500:
+ *         description: "서버 오류"
+ *   post:
+ *     summary: "주문 상품 추가"
+ *     tags: [Orders]
+ *     description: 해당 주문에 상품을 추가합니다.
+ *     parameters:
+ *       - in: path
+ *         name: order_id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: "주문 ID"
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [prodcut_id, quantity]
+ *             properties:
+ *               prodcut_id:
+ *                 type: integer
+ *               quantity:
+ *                 type: integer
+ *           example:
+ *             product_id: 1
+ *             quantity: 3
+ *     responses:
+ *       201:
+ *         description: "주문 품목 생성 완료"
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 order_item_id:
+ *                   type: integer
+ *                   description: 주문 품목 ID
+ *                 product_id:
+ *                   type: integer
+ *                   description: 상품 ID
+ *                 quantity:
+ *                   type: integer
+ *                   description: 주문 수량
+ *                 total_price:
+ *                   type: integer
+ *                   description: 총합 가격
+ *             example:
+ *               order_item_id: 1
+ *               product_id: 1
+ *               quantity: 3
+ *               total_price: 50000
+ *       400:
+ *         description: "잘못된 요청"
+ *       404:
+ *         description: "해당 주문을 찾을 수 없음"
+ *       500:
+ *         description: "서버 오류"
+ * 
+ */
+
+
+router.get('/:order_id/order-items', async (req, res) => {
+  try {
+    const orderId = parseInt(req.params.order_id, 10);
     if (Number.isNaN(orderId)) {
       return res.status(400).json({ error: '유효하지 않은 주문 ID입니다.' });
     }
 
-    const del = await pool.query('DELETE FROM orders WHERE order_id = $1', [orderId]);
-    if (del.rowCount === 0) {
-      return res.status(404).json({ error: '주문을 찾을 수 없습니다.' });
+    const sql = `
+      SELECT order_item_id, product_id, quantity, total_price
+      FROM order_items
+      WHERE order_id = $1
+    `;
+    const { rows } = await pool.query(sql, [orderId]);
+    if (rows.length === 0) {
+      return res.status(404).json({ error: '주문 품목을 찾을 수 없습니다.' });
     }
-    return res.json({ message: `order ${orderId} deleted` });
+    return res.json(rows);
   } catch (err) {
-    console.error('주문 삭제 오류:', err);
     return res.status(500).json({ error: '서버 오류가 발생했습니다.' });
   }
 });
+
+router.post('/:order_id/order-items', async (req, res) => {
+
+  const orderId = Number.parseInt(req.params.order_id, 10);
+  if (Number.isNaN(orderId)) {
+    return res.status(400).json({ error: '유효하지 않은 상담 ID입니다.' });
+  }
+
+  const { product_id, quantity } = req.body;
+
+  if (!Number.isInteger(product_id)) {
+    return res.status(400).json({ error: 'product_id의 형식은 integer이어야 합니다.' });
+  }
+  if (!Number.isInteger(quantity)) {
+    return res.status(400).json({ error: 'quantity의 형식은 integer이어야 합니다.' });
+  }
+  try {
+
+    const { rows } = await pool.query(
+      `INSERT INTO order_items (order_id, product_id, quantity)
+       VALUES ($1, $2, $3)
+       RETURNING order_item_id, product_id, quantity, total_price`,
+      [orderId, product_id, quantity]
+    );
+
+    res.status(201).json(rows[0]);
+  } catch (err) {
+    console.log(err);
+    res.status(500).json({ error: '서버 내부 오류가 발생했습니다.' });
+  }
+});
+
 
 export default router;

@@ -15,35 +15,21 @@ const router = express.Router();
  * @swagger
  * /manuals:
  *   get:
- *     summary: "매뉴얼 전체 목록 조회"
- *     tags:
- *       - Manuals
+ *     summary: 매뉴얼 조회
+ *     description: | 
+ *       전체 매뉴얼을 조회합니다.
+ *       - 카테고리 필터가 존재합니다.
+ *     tags: [Manuals]
  *     parameters:
  *       - in: query
- *         name: page
- *         schema:
- *           type: integer
- *           default: 1
- *         description: "페이지 번호(1부터 시작)"
- *       - in: query
- *         name: limit
- *         schema:
- *           type: integer
- *           default: 20
- *         description: "페이지 크기(최대 100)"
- *       - in: query
- *         name: category_id
- *         schema:
- *           type: integer
- *         description: "카테고리 필터(예: 배송, 반품 등)"
- *       - in: query
- *         name: q
+ *         name: category
  *         schema:
  *           type: string
- *         description: "제목 검색어"
+ *           enum: [취소, 교환, 반품, 반품비, 회수, 취소철회, 배송일정, 배송완료미수령, 상품파손, 해외배송, 상품누락, 주소검색, 배송비, 포장, 상품문의, 상품후기, 가입, 탈퇴, 개인정보설정, 로그인, 로그아웃, 인증, 비밀번호관리, 신용카드, 결제수단, 무통장입금, 할인쿠폰, 주문, 주문확인, 포인트]
+ *         description: 카테고리 필터
  *     responses:
  *       200:
- *         description: "매뉴얼 목록"
+ *         description: 상담 목록
  *         content:
  *           application/json:
  *             schema:
@@ -54,114 +40,224 @@ const router = express.Router();
  *                   items:
  *                     type: object
  *                     properties:
- *                       manual_id:
- *                         type: integer
+ *                       manual_id: 
+ *                         type: integer 
+ *                         description: 매뉴얼 ID
  *                       title:
  *                         type: string
- *                       category_id:
- *                         type: integer
- *                       edited_at:
+ *                         description: 매뉴얼 제목
+ *                       edited_at:  
  *                         type: string
- *                         format: date
- *                       file_path:
+ *                         format: date-time
+ *                         description: 최근 수정 날짜
+ *                       file_url:
  *                         type: string
- *                 meta:
- *                   type: object
- *                   properties:
- *                     page:
- *                       type: integer
- *                     limit:
- *                       type: integer
- *                     total:
- *                       type: integer
+ *                         description: 파일 URL
+ *                         nullable: true
+ *                       category:
+ *                         type: string
+ *                         description: 카테고리
+ *                       content:
+ *                         type: string, 
+ *                         description: 매뉴얼 내용
  *             example:
- *               data:
- *                 - manual_id: 1
- *                   title: "배송 매뉴얼"
- *                   category_id: 3
- *                   edited_at: "2025-09-01"
- *                   file_path: "https://s3/manuals/shipping.md"
- *               meta:
- *                 page: 1
- *                 limit: 20
- *                 total: 42
+ *               manual_id: 1
+ *               title: "로그인 오류 해결 방법"
+ *               edited_at: "2025-09-01T04:08:31.231Z"
+ *               file_url: "http://dummyimage.com/192x100.png/ff4444/ffffff"
+ *               category: "로그인"
+ *               content: "재부팅을 요청한다."
  *       400:
- *         description: "잘못된 요청"
+ *         description: 잘못된 요청
  *       500:
- *         description: "서버 오류"
+ *         description: 서버 오류
  */
+
 router.get('/', async (req, res) => {
   try {
-    const page = Math.max(1, parseInt(req.query.page ?? '1', 10));
-    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit ?? '20', 10)));
-    const offset = (page - 1) * limit;
 
-    const { q } = req.query;
+    const { category } = req.query;
 
-    const where = [];
     const params = [];
-    let idx = 1;
+    let whereSql = '';
 
-    if (q && String(q).trim() !== '') {
-      where.push(`title ILIKE $${idx++}`);
-      params.push(`%${String(q).trim()}%`);
+    // category: 문자열, 공백 방지
+    if (category !== undefined) {
+      const cat = String(category).trim();
+      if (cat.length === 0) {
+        return res.status(400).json({ error: 'category는 빈 문자열일 수 없습니다.' });
+      }
+      params.push(cat);
+      whereSql = 'WHERE m.category = $1';
     }
 
-    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
-
     const listSql = `
-      SELECT
-        manual_id,
-        title,
-        category_id, 
-        TO_CHAR(edited_at, 'YYYY-MM-DD') AS edited_at,
-        file_path
-      FROM manuals
+      SELECT m.manual_id, m.title, m.edited_at, m.file_url, m.category, m.content
+      FROM manuals m
       ${whereSql}
-      ORDER BY edited_at DESC, manual_id DESC
-      LIMIT ${limit} OFFSET ${offset}
-    `;
-    const countSql = `
-      SELECT COUNT(*) AS total
-      FROM manuals
-      ${whereSql}
+      ORDER BY m.category DESC
     `;
 
-    const [listRes, countRes] = await Promise.all([
-      pool.query(listSql, params),
-      pool.query(countSql, params),
-    ]);
-
-    const total = Number(countRes.rows[0]?.total ?? 0);
-
-    return res.json({
-      data: listRes.rows,
-      meta: { page, limit, total },
-    });
+    const { rows } = await pool.query(listSql, params);
+    return res.json({ data: rows });
   } catch (err) {
-    console.error('매뉴얼 목록 조회 오류:', err);
     return res.status(500).json({ error: '서버 오류가 발생했습니다.' });
   }
 });
 
+/**
+ * @swagger
+ * /manuals:
+ *   post:
+ *     summary: "매뉴얼 추가"
+ *     tags: [Manuals]
+ *     description: 매뉴얼을 추가합니다.
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [title, file_url, category, content]
+ *             properties:
+ *               title:
+ *                 type: string
+ *                 description: 매뉴얼 제목
+ *               file_url:
+ *                 type: string 
+ *                 description: 파일 URL
+ *                 nullable: true
+ *               category:
+ *                 type: string
+ *                 description: 카테고리
+ *               content:
+ *                 type: string
+ *                 description: 매뉴얼 내용
+ *           example:
+ *             title: "반품 접수 방법"
+ *             file_url: "http://dummyimage.com/192x100.png/ff4444/ffffff"
+ *             category: "반품"
+ *             content: "반품을 접수하기 위해서는 고객의 주문 내역에서 반품 신청을 누른다."
+ *     responses:
+ *       201:
+ *         description: "매뉴얼 추가 완료"
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 manaul_id:
+ *                   type: integer
+ *                   description: 매뉴얼 ID
+ *                 title: 
+ *                   type: string
+ *                   description: 매뉴얼 제목
+ *                 edited_at:
+ *                   type: string
+ *                   format: date-time
+ *                   description: 최근 수정 날짜
+ *                 file_url: 
+ *                   type: string
+ *                   description: 파일 URL
+ *                 category:
+ *                   type: string
+ *                   description: 카테고리
+ *                 content:
+ *                   type: string
+ *                   description: 매뉴얼 내용\
+ *             example:
+ *               manual_id: 1
+ *               title: "반품 접수 방법"
+ *               edited_at: "2025-09-01T04:08:31.231Z"
+ *               file_url: "http://dummyimage.com/192x100.png/ff4444/ffffff"
+ *               category: "반품"
+ *               content: "반품을 접수하기 위해서는 고객의 주문 내역에서 반품 신청을 누른다."
+ *               
+ *       400: 
+ *         description: "잘못된 요청"
+ *       404: 
+ *         description: "매뉴얼 추가 오류"
+ *       500:   
+ *         description: "서버 오류"
+ */
+
+router.post('/', async (req, res) => {
+
+
+  const { title, file_url, category, content } = req.body;
+
+  if (typeof title !== 'string' || title.trim().length === 0) {
+    return res.status(400).json({ error: 'title은 비어 있을 수 없습니다.' });
+  }
+  if (typeof file_url !== 'string') {
+    return res.status(400).json({ error: 'file_url의 형식은 string이어야 합니다.' });
+  }
+  if (typeof content !== 'string' || content.trim().length === 0) {
+    return res.status(400).json({ error: 'content는 비어 있을 수 없습니다.' });
+  }
+  if (typeof category !== 'string' || category.trim().length === 0) {
+    return res.status(400).json({ error: 'category는 비어 있을 수 없습니다.' });
+  }
+  
+  
+
+  try {
+
+    const { rows } = await pool.query(
+      `INSERT INTO manuals (title, file_url, category, content)
+       VALUES ($1, $2, $3, $4)
+       RETURNING manual_id, title, edited_at, file_url, category, content`,
+      [title, file_url, category, content]
+    );
+
+    res.status(201).json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: '서버 내부 오류가 발생했습니다.'});
+  }
+});
 
 /**
  * @swagger
- * /manuals/{id}:
- *   get:
- *     summary: "특정 카테고리 매뉴얼 조회"
- *     tags:
- *       - Manuals
+ * /manuals/{manual_id}:
+ *   patch:
+ *     summary: 매뉴얼 수정
+ *     description: 해당 매뉴얼을 수정합니다.
+ *     tags: [Manuals]
  *     parameters:
  *       - in: path
- *         name: id
+ *         name: manual_id
  *         required: true
  *         schema:
  *           type: integer
- *         description: "카테고리 ID"
+ *         description: 매뉴얼 ID
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               title:
+ *                 type: string
+ *                 description: 매뉴얼 제목
+ *               file_url:
+ *                 type: string
+ *                 nullable: true
+ *                 description: 파일 URL
+ *               category:
+ *                 type: string
+ *                 description: 카테고리
+ *               content:
+ *                 type: string
+ *                 description: 매뉴얼 내용
+ *           example:
+ *             title: "교환 규정"
+ *             file_url: "http://dummyimage.com/237x100.png/cc0000/ffffff"
+ *             category: "교환"
+ *             content: "단순 변심은 30일 이내, 제품 문제는 3개월 이내 교환이 가능하다."
  *     responses:
  *       200:
- *         description: "카테고리 상세"
+ *         description: 수정된 매뉴얼 정보
  *         content:
  *           application/json:
  *             schema:
@@ -171,49 +267,92 @@ router.get('/', async (req, res) => {
  *                   type: integer
  *                 title:
  *                   type: string
- *                 category_id:
- *                   type: integer
+ *                   description: 매뉴얼 제목
  *                 edited_at:
  *                   type: string
- *                   format: date
- *                 file_path:
+ *                   formant: date-time
+ *                   description: 최근 수정 날짜
+ *                 file_url:
  *                   type: string
+ *                   nullable: true
+ *                   description: 파일 URL
+ *                 category:
+ *                   type: string
+ *                   description: 카테고리
+ *                 content:
+ *                   type: string
+ *                   description: 매뉴얼 내용
  *             example:
  *               manual_id: 1
- *               title: "배송 매뉴얼"
- *               category_id: 3
- *               edited_at: "2025-09-01"
- *               file_path: "https://s3/manuals/shipping.md"
+ *               title: "교환 규정"
+ *               edited_at: "2025-09-01T04:08:31.231Z"
+ *               file_url: "http://dummyimage.com/237x100.png/cc0000/ffffff"
+ *               category: "교환"
+ *               content: "단순 변심은 30일 이내, 제품 문제는 3개월 이내 교환이 가능하다."
  *       400:
- *         description: "잘못된 요청"
+ *         description: 잘못된 요청
  *       404:
- *         description: "매뉴얼 없음"
+ *         description: 매뉴얼 없음
  *       500:
- *         description: "서버 오류"
+ *         description: 서버 오류
  */
-router.get('/:id', async (req, res) => {
-  try {
-    const categoryId = parseInt(req.params.id, 10);
-    if (Number.isNaN(categoryId)) {
-      return res.status(400).json({ error: '유효하지 않은 카테고리 ID입니다.' });
+
+
+router.route('/:manual_id')
+  .patch(async (req, res) => {
+    try {
+      const manualId = Number.parseInt(req.params.manual_id, 10);
+      if (Number.isNaN(manualId)) {
+        return res.status(400).json({ error: '유효하지 않은 매뉴얼 ID입니다.' });
+      }
+
+      let { title, file_url, category, content } = req.body ?? {};
+      if (title !== undefined) title = String(title).trim();
+      if (file_url !== undefined) file_url = String(file_url).trim();
+      if (category !== undefined) category = String(category).trim();
+      if (content !== undefined) content = String(content).trim();
+
+      const fields = { title, file_url, category, content };
+      const updates = [];
+      const values = [];
+      let paramIndex = 1;
+
+      for (const [key, value] of Object.entries(fields)) {
+        if (value !== undefined) {
+          updates.push(`${key} = $${paramIndex++}`);
+          values.push(value);
+        }
+      }
+
+      if (updates.length === 0) {
+        return res.status(400).json({ error: '수정할 내용을 입력해주세요.' });
+      }
+
+      // edited_at은 항상 현재 시간
+      updates.push('edited_at = NOW()');
+
+      values.push(manualId);
+
+      const updateQuery = `
+        UPDATE manuals
+        SET ${updates.join(', ')}
+        WHERE manual_id = $${paramIndex}
+        RETURNING manual_id, title, edited_at, file_url, category, content
+      `;
+      const result = await pool.query(updateQuery, values);
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({ error: '매뉴얼을 찾을 수 없습니다.' });
+      }
+
+      return res.status(200).json(result.rows[0]);
+    } catch (err) {
+      console.error('매뉴얼 수정 오류:', err);
+      return res.status(500).json({ error: '서버 오류가 발생했습니다.' });
     }
+  });
 
-    const sql = `
-      SELECT manual_id, title, categoryId, TO_CHAR(edited_at, 'YYYY-MM-DD') AS edited_at, file_path
-      FROM manuals
-      WHERE manual_id = $1
-    `;
-    const { rows } = await pool.query(sql, [manualId]);
 
-    if (rows.length === 0) {
-      return res.status(404).json({ error: '매뉴얼을 찾을 수 없습니다.' });
-    }
 
-    return res.json(rows[0]);
-  } catch (err) {
-    console.error('매뉴얼 상세 조회 오류:', err);
-    return res.status(500).json({ error: '서버 오류가 발생했습니다.' });
-  }
-});
 
 export default router;

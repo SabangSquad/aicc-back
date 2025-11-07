@@ -12,13 +12,14 @@ const router = express.Router();
 
 /**
  * @swagger
- * /agents/{id}:
+ * /agents/{agent_id}:
  *   get:
- *     summary: 상담원 상세 조회
+ *     summary: 상담원 정보 조회
+ *     description: 해당 상담원의 정보를 조회합니다.
  *     tags: [Agents]
  *     parameters:
  *       - in: path
- *         name: id
+ *         name: agent_id
  *         required: true
  *         schema:
  *           type: integer
@@ -60,11 +61,12 @@ const router = express.Router();
  *       500:
  *         description: 서버 오류
  *   patch:
- *     summary: 상담원 상세 수정
+ *     summary: 상담원 정보 수정
+ *     description: 해당 상담원의 정보를 수정합니다. 
  *     tags: [Agents]
  *     parameters:
  *       - in: path
- *         name: id
+ *         name: agent_id
  *         required: true
  *         schema:
  *           type: integer
@@ -124,10 +126,10 @@ const router = express.Router();
  */
 
 
-router.route('/:id')
+router.route('/:agent_id')
   .get(async (req, res) => {
     try {
-      const agentId = Number.parseInt(req.params.id, 10);
+      const agentId = Number.parseInt(req.params.agent_id, 10);
       if (Number.isNaN(agentId)) {
         return res.status(400).json({ error: '유효하지 않은 상담원 ID입니다.' });
       }
@@ -149,7 +151,7 @@ router.route('/:id')
   })
   .patch(async (req, res) => {
     try {
-      const agentId = Number.parseInt(req.params.id, 10);
+      const agentId = Number.parseInt(req.params.agent_id, 10);
       if (Number.isNaN(agentId)) {
         return res.status(400).json({ error: '유효하지 않은 상담원 ID입니다.' });
       }
@@ -211,14 +213,16 @@ router.route('/:id')
 
 /**
  * @swagger
- * /agents/{id}/cases:
+ * /agents/{agent_id}/cases:
  *   get:
- *     summary: 상담원이 맡은 상담 목록
- *     description: 상담 상태/감정/카테고리 필터 존재
+ *     summary: 상담원이 맡은 상담 목록 조회
+ *     description: | 
+ *       해당 상담원이 맡은 상담 목록을 조회합니다.    
+ *       - 상담 상태/감정/카테고리 필터가 존재합니다.
  *     tags: [Agents]
  *     parameters:
  *       - in: path
- *         name: id
+ *         name: agent_id
  *         required: true
  *         schema:
  *           type: integer
@@ -227,7 +231,7 @@ router.route('/:id')
  *         name: status
  *         schema:
  *           type: string
- *           enum: [대기, 종료, 상담]
+ *           enum: [대기, 상담, 종료]
  *         description: 상담 상태 필터
  *       - in: query
  *         name: emotion
@@ -239,7 +243,8 @@ router.route('/:id')
  *         name: category
  *         schema:
  *           type: string
- *           enum: [취소, 교환, 반품, 반품비, 회수, 취소철회, 배송일정, 배송완료미수령, 상품파손, 해외배송, 상품누락, 주소검색, 배송비, 포장, 상품문의, 상품후기, 가입, 탈퇴, 개인정보설정, 로그인, 로그아웃, 인증, 비밀번호관리, 신용카드, 결제수단, 무통장입금, 할인쿠폰, 주문, 주문확인, 포인트]
+ *           enum: [취소, 교환, 반품, 반품비, 회수, 취소철회, 배송일정, 배송완료미수령, 상품파손, 해외배송, 상품누락, 주소검색, 배송비, 포장, 상품문의, 
+ *                  상품후기, 가입, 탈퇴, 개인정보설정, 로그인, 로그아웃, 인증, 비밀번호관리, 신용카드, 결제수단, 무통장입금, 할인쿠폰, 주문, 주문확인, 포인트]
  *         description: 카테고리 필터
  *     responses:
  *       200:
@@ -256,31 +261,62 @@ router.route('/:id')
  *                     properties:
  *                       case_id: 
  *                         type: integer 
+ *                         description: 상담 ID
+ *                       customer_id:
+ *                         type: integer
+ *                         description: 고객 ID
  *                       title:
  *                         type: string
+ *                         description: 상담 제목
  *                       status:  
- *                         type: string, 
- *                         enum: [대기, 종료, 상담]
+ *                         type: string
+ *                         description: 상담 상태
+ *                       created_at:
+ *                         type: string
+ *                         format: date-time
+ *                         description: 상담 생성 시각
+ *                       closed_at:
+ *                         type: string
+ *                         format: date-time
+ *                         nullable: true
+ *                         description: 상담 종료 시각
+ *                       memo:
+ *                         type: string
+ *                         description: 메모
+ *                       content:
+ *                         type: string
+ *                         description: 상담 내용
+ *                       order_id:
+ *                         type: integer
+ *                         description: 주문 ID
  *                       category:
  *                         type: string
+ *                         description: 카테고리
  *                       emotion:
  *                         type: string
- *                       created_at:
- *                         type: string, 
- *                         format: date-time
- *                       closed_at:
- *                         type: string, 
- *                         format: date-time, 
- *                         nullable: true
+ *                         description: 고객 감정
+
+ *             example:
+ *               case_id: 1
+ *               customer_id: 1
+ *               title: "환불하고 싶어요."
+ *               status: "대기"
+ *               created_at: "2025-09-01T04:08:31.231Z"
+ *               closed_at: null
+ *               memo: "화가 많이 남"
+ *               content: "상품 품질이 정말 별로네요."
+ *               order_id: 1
+ *               category: "환불"
+ *               emotion: "화남"
  *       400:
  *         description: 잘못된 요청
  *       500:
  *         description: 서버 오류
  */
 
-router.get('/:id/cases', async (req, res) => {
+router.get('/:agent_id/cases', async (req, res) => {
   try {
-    const agentId = Number.parseInt(req.params.id, 10);
+    const agentId = Number.parseInt(req.params.agent_id, 10);
     if (!Number.isInteger(agentId) || agentId <= 0) {
       return res.status(400).json({ error: '유효하지 않은 상담원 ID입니다.' });
     }
@@ -327,7 +363,7 @@ router.get('/:id/cases', async (req, res) => {
     const whereSql = `WHERE ${where.join(' AND ')}`;
 
     const listSql = `
-      SELECT c.case_id, c.title, c.status, c.category, c.emotion, c.created_at, c.closed_at
+      SELECT c.case_id, c.customer_id, c.title, c.status, c.created_at, c.closed_at, c.memo, c.content, c.order_id, c.category, c.emotion
       FROM cases c
       ${whereSql}
       ORDER BY c.created_at DESC
@@ -345,14 +381,16 @@ router.get('/:id/cases', async (req, res) => {
 
 /**
  * @swagger
- * /agents/{id}/satisfactions:
+ * /agents/{agent_id}/satisfactions:
  *   get:
  *     summary: 상담원의 상담 만족도 조회
- *     description: collected_at 기준 필터
+ *     description: |
+ *       해당 상담원이 맡았던 상담의 만족도를 조회합니다.      
+ *       - collected_at 기준 필터가 존재합니다.
  *     tags: [Agents]
  *     parameters:
  *       - in: path
- *         name: id
+ *         name: agent_id
  *         required: true
  *         schema:
  *           type: integer
@@ -379,10 +417,22 @@ router.get('/:id/cases', async (req, res) => {
  *               items:
  *                 type: object
  *                 properties:
- *                   case_id:      { type: integer }
- *                   score:        { type: integer, description: "만족도" }
- *                   comment:      { type: string, nullable: true }
- *                   collected_at: { type: string, format: date-time }
+ *                   case_id:
+ *                     type: integer
+ *                   score:
+ *                     type: integer
+ *                     description: "만족도"
+ *                   comment:
+ *                     type: string
+ *                     nullable: true
+ *                   collected_at:
+ *                     type: string
+ *                     format: date-time
+  *             example:
+ *               case_id: 1
+ *               score: 5
+ *               comment: "너무 친절하셔요"
+ *               collected_at: "2025-09-01T04:08:31.231Z"
  *       400:
  *         description: 잘못된 요청
  *       500:
@@ -390,9 +440,9 @@ router.get('/:id/cases', async (req, res) => {
  */
 
 
-router.get('/:id/satisfactions', async (req, res) => {
+router.get('/:agent_id/satisfactions', async (req, res) => {
   try {
-    const agentId = Number.parseInt(req.params.id, 10);
+    const agentId = Number.parseInt(req.params.agent_id, 10);
     if (!Number.isInteger(agentId) || agentId <= 0) {
       return res.status(400).json({ error: '유효하지 않은 상담원 ID입니다.' });
     }
