@@ -17,22 +17,15 @@ services:
       - ./letsencrypt:/etc/letsencrypt:ro
     networks: [net]
 
-  api:
-    build:
-      context: ..
-      dockerfile: ./Dockerfile
-    container_name: aicc-api
-    restart: unless-stopped
+  aicc-api:
+    image: ainhn/aicc:back-latest
     env_file:
-      - ../.env
-    expose:
-      - "4000"
-    volumes:
-      - ./redis:/var/run/redis
+      - .env
     depends_on:
       - redis
-    command: ["node","src/app.js"]
-    networks: [net]
+    volumes:
+      - redis_run:/var/run/redis
+    restart: unless-stopped
 
   redis:
     image: redis:7-alpine
