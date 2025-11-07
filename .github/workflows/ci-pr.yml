@@ -10,9 +10,6 @@ on:
       - "src/infra/nginx/nginx.conf"
       - "src/infra/redis/redis.conf"
       - "docker-compose.yml"
-    paths-ignore:
-      - "**.md"
-      - ".github/ISSUE_TEMPLATE/**"
 
 env:
   LATEST_TAG: arm64-latest
