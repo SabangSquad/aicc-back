@@ -40,7 +40,7 @@ jobs:
           username: ${{ secrets.REGISTRY_USER }}
           password: ${{ secrets.REGISTRY_TOKEN }}
 
-      # PR: build만, main push: build+push
+      # build + push
       - name: Build & Push (ARM64)
         uses: docker/build-push-action@v6
         with:
