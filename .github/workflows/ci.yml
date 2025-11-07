@@ -30,8 +30,6 @@ jobs:
     permissions:
       contents: read
       packages: write
-    environment:
-      name: prod
     steps:
       - name: Checkout
         uses: actions/checkout@v4
