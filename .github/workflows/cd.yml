@@ -10,7 +10,7 @@ jobs:
     if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     steps:
-      - name: SSH deploy (git pull + compose up)
+      - name: SSH deploy
         uses: appleboy/ssh-action@v1.1.0
         with:
           host: ${{ secrets.EC2_HOST }}
@@ -18,23 +18,11 @@ jobs:
           key: ${{ secrets.EC2_KEY }}
           script: |
             set -e
-            cd /srv/aicc-back
-            if [ ! -d .git ]; then
-              git init
-              git remote add origin https://github.com/<YOUR_GH_USER>/aicc-back.git
-              git fetch origin main
-              git checkout -t origin/main
-            else
-              git fetch origin main
-              git reset --hard origin/main
-            fi
-
-            export ENV_FILE="/srv/aicc-back/.env"
-            export HOST_INFRA_DIR="/srv/aicc-back/src/infra"
-
             if [ -n "${{ secrets.REGISTRY_USER }}" ] && [ -n "${{ secrets.REGISTRY_TOKEN }}" ]; then
               echo "${{ secrets.REGISTRY_TOKEN }}" | docker login -u "${{ secrets.REGISTRY_USER }}" --password-stdin
             fi
-
+            export ENV_FILE="/srv/aicc-back/.env"
+            export HOST_INFRA_DIR="/srv/aicc-back/src/infra"
+            docker compose -f /srv/aicc-back/docker-compose.yml pull
             docker compose -f /srv/aicc-back/docker-compose.yml up -d
             docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
