@@ -9,73 +9,32 @@ jobs:
   deploy:
     if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout (for copying files)
-        uses: actions/checkout@v4
-
-      - name: Pin known_hosts
-        run: |
-          mkdir -p ~/.ssh
-          ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts
-          chmod 644 ~/.ssh/known_hosts
-
-      - name: Write PEM to file (multiline-safe)
-        run: |
-          umask 177
-          cat > ./ec2_key.pem <<'EOF'
-          ${{ secrets.EC2_KEY }}
-          EOF
-          wc -c ./ec2_key.pem
-
-      - name: Ensure target dir on EC2
-        uses: appleboy/ssh-action@v1.0.3
+      - name: SSH deploy (git pull + compose up)
+        uses: appleboy/ssh-action@v1.1.0
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
-          key_path: ./ec2_key.pem
-          script: |
-            sudo mkdir -p /srv/aicc-back/src/infra
-            sudo chown $USER:$USER -R /srv/aicc-back
-
-      # compose / infra 변경사항을 EC2로 전송
-      - name: Sync compose & infra to EC2 (root compose)
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key_path: ./ec2_key.pem
-          source: "docker-compose.yml,src/infra/**"
-          target: "/srv/aicc-back"
-
-      # 원격 배포
-      - name: Remote deploy
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key_path: ./ec2_key.pem
+          key: ${{ secrets.EC2_KEY }}
           script: |
             set -e
+            cd /srv/aicc-back
+            if [ ! -d .git ]; then
+              git init
+              git remote add origin https://github.com/<YOUR_GH_USER>/aicc-back.git
+              git fetch origin main
+              git checkout -t origin/main
+            else
+              git fetch origin main
+              git reset --hard origin/main
+            fi
 
-            # EC2에서 환경 변수로 호스트 경로/ENV 파일 지정
-            export HOST_INFRA_DIR="/srv/aicc-back/src/infra"
             export ENV_FILE="/srv/aicc-back/.env"
+            export HOST_INFRA_DIR="/srv/aicc-back/src/infra"
 
-            ls -la /srv/aicc-back
-            ls -la "$HOST_INFRA_DIR"
-            test -f /srv/aicc-back/docker-compose.yml || { echo "compose missing"; exit 1; }
-
-            # (선택) 레지스트리 로그인
             if [ -n "${{ secrets.REGISTRY_USER }}" ] && [ -n "${{ secrets.REGISTRY_TOKEN }}" ]; then
               echo "${{ secrets.REGISTRY_TOKEN }}" | docker login -u "${{ secrets.REGISTRY_USER }}" --password-stdin
             fi
 
-            docker compose -f /srv/aicc-back/docker-compose.yml config
-            docker compose -f /srv/aicc-back/docker-compose.yml pull || true
             docker compose -f /srv/aicc-back/docker-compose.yml up -d
             docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
-
-      - name: Cleanup PEM
-        if: always()
-        run: rm -f ./ec2_key.pem
