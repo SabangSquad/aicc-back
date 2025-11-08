@@ -1,14 +1,12 @@
 name: aicc-stack
+
 services:
   nginx:
     image: nginx:1.27-alpine
     container_name: aicc-nginx
     restart: unless-stopped
-    depends_on:
-      - aicc-api
-    ports:
-      - "80:80"
-      - "443:443"
+    depends_on: [ aicc-api ]
+    ports: [ "80:80", "443:443" ]
     volumes:
       - ${HOST_INFRA_DIR:-./src/infra}/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ${HOST_INFRA_DIR:-./src/infra}/certbot/www:/var/www/certbot
@@ -21,8 +19,7 @@ services:
     restart: unless-stopped
     env_file:
       - ${ENV_FILE:-./.env}
-    depends_on:
-      - redis
+    depends_on: [ redis ]
     volumes:
       - redis_run:/var/run/redis
     networks: [ aicc-net ]
@@ -40,7 +37,9 @@ services:
 
 volumes:
   redis_run:
+    name: aicc-redis-run
   redis_data:
+    name: aicc-redis-data
 
 networks:
   aicc-net:
