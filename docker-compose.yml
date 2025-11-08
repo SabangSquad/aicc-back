@@ -39,7 +39,7 @@ services:
     networks: [ aicc-net ]
 
 volumes:
-  redus_run:
+  redis_run:
   redis_data:
 
 networks:
