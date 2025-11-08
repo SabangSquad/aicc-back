@@ -12,8 +12,8 @@ on:
       - "docker-compose.yml"
 
 env:
-  IMAGE_NAME: einhn/aicc-back
-  LATEST_TAG: arm64-latest
+  IMAGE_NAME: einhn/aicc
+  LATEST_TAG: back-latest
 
 jobs:
   build:
