@@ -21,8 +21,22 @@ jobs:
             if [ -n "${{ secrets.REGISTRY_USER }}" ] && [ -n "${{ secrets.REGISTRY_TOKEN }}" ]; then
               echo "${{ secrets.REGISTRY_TOKEN }}" | docker login -u "${{ secrets.REGISTRY_USER }}" --password-stdin
             fi
+            
             export ENV_FILE="/srv/aicc-back/.env"
             export HOST_INFRA_DIR="/srv/aicc-back/src/infra"
+
+            sudo mkdir -p /srv/aicc-back/src/infra/nginx
+            sudo mkdir -p /srv/aicc-back/src/infra/certbot/www
+            sudo mkdir -p /srv/aicc-back/src/infra/letsencrypt
+            sudo chown -R $USER:$USER /srv/aicc-back/src/infra
+
+
+            # 배포
             docker compose -f /srv/aicc-back/docker-compose.yml pull
             docker compose -f /srv/aicc-back/docker-compose.yml up -d
+
+            # Nginx 문법 검사 & 헬스체크
+            docker exec aicc-nginx nginx -t || true
+            curl -sSI http://127.0.0.1/health || true
+            curl -sSI http://127.0.0.1/.well-known/acme-challenge/ping.txt || true
             docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'

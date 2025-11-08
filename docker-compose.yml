@@ -9,7 +9,7 @@ services:
     ports: [ "80:80", "443:443" ]
     volumes:
       - ${HOST_INFRA_DIR:-./src/infra}/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ${HOST_INFRA_DIR:-./src/infra}/certbot/www:/var/www/certbot
+      - ${HOST_INFRA_DIR:-./src/infra}/certbot/www:/acme-challenge
       - ${HOST_INFRA_DIR:-./src/infra}/letsencrypt:/etc/letsencrypt
     networks: [ aicc-net ]
 
@@ -28,7 +28,7 @@ services:
     image: redis:7.2-alpine
     container_name: aicc-redis
     restart: unless-stopped
-    command: ["redis-server","/usr/local/etc/redis/redis.conf"]
+    command: ["/bin/sh","-c","mkdir -p /var/run/redis && chown -R redis:redis /var/run/redis && exec su-exec redis redis-server /usr/local/etc/redis/redis.conf"]
     volumes:
       - ${HOST_INFRA_DIR:-./src/infra}/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
       - redis_run:/var/run/redis
