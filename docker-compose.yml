@@ -10,7 +10,7 @@ services:
     volumes:
       - ${HOST_INFRA_DIR:-./src/infra}/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ${HOST_INFRA_DIR:-./src/infra}/certbot/www:/acme-challenge
-      - ${HOST_INFRA_DIR:-./src/infra}/letsencrypt:/etc/letsencrypt
+      - /etc/letsencrypt:/etc/letsencrypt:ro
     networks: [ aicc-net ]
 
   aicc-api:
