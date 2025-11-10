@@ -9,6 +9,8 @@ const options = {
       version: "1.0.0",
       description: "AICC 프로젝트 백엔드 API 문서"
     },
+    // 로컬/배포 겸용
+    servers: [{ url: '/' }, { url: '/api' }],
   },
   apis: ['./src/routes/*.js'],
 };
@@ -16,7 +18,7 @@ const options = {
 const swaggerSpec = swaggerJsdoc(options);
 
 function setupSwagger(app) {
-  app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+  app.use('/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 }
 
 export default setupSwagger;
