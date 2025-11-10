@@ -259,6 +259,9 @@ router.route('/:agent_id')
  *                   items:
  *                     type: object
  *                     properties:
+ *                       agent_id: 
+ *                         type: integer 
+ *                         description: 상담원 ID
  *                       case_id: 
  *                         type: integer 
  *                         description: 상담 ID
@@ -363,7 +366,7 @@ router.get('/:agent_id/cases', async (req, res) => {
     const whereSql = `WHERE ${where.join(' AND ')}`;
 
     const listSql = `
-      SELECT c.case_id, c.customer_id, c.title, c.status, c.created_at, c.closed_at, c.memo, c.content, c.order_id, c.category, c.emotion
+      SELECT c.agent_id, c.case_id, c.customer_id, c.title, c.status, c.created_at, c.closed_at, c.memo, c.content, c.order_id, c.category, c.emotion
       FROM cases c
       ${whereSql}
       ORDER BY c.created_at DESC

@@ -271,6 +271,9 @@ router.patch('/:customer_id', async (req, res) => {
  *                       agent_id:
  *                         type: integer
  *                         description: 상담원 ID
+ *                       case_id:
+ *                         type: integer
+ *                         description: 상담 ID
  *                       title:
  *                         type: string
  *                         description: 상담 제목
@@ -286,6 +289,9 @@ router.patch('/:customer_id', async (req, res) => {
  *                         format: date-time
  *                         nullable: true
  *                         description: 상담 종료 시각
+ *                       memo: 
+ *                         type: string
+ *                         description: 메모
  *                       content:
  *                         type: string
  *                         description: 상담 내용
@@ -295,15 +301,21 @@ router.patch('/:customer_id', async (req, res) => {
  *                       category:
  *                         type: string
  *                         description: 카테고리
+ *                       emotion:
+ *                         type: string
+ *                         description: 감정
  *             example:
  *               agent_id: 1
+ *               case_id: 1
  *               title: "환불하고 싶어요."
  *               status: "대기"
  *               created_at: "2025-09-01T04:08:31.231Z"
  *               closed_at: null
+ *               "memo": "급한 사항임"
  *               content: "상품 품질이 정말 별로네요."
  *               order_id: 1
  *               category: "환불"
+ *               emotion: "화남"
  *       400:
  *         description: "잘못된 요청"
  *       500:
@@ -348,7 +360,7 @@ router.get('/:customer_id/cases', async (req, res) => {
     const whereSql = `WHERE ${where.join(' AND ')}`;
 
     const listSql = `
-      SELECT c.agent_id, c.title, c.status, c.created_at, c.closed_at, c.content, c.order_id, c.category
+      SELECT c.agent_id, c.case_id, c.customer_id, c.title, c.status, c.created_at, c.closed_at, c.memo, c.content, c.order_id, c.category, c.emotion
       FROM cases c
       ${whereSql}
       ORDER BY c.created_at DESC
