@@ -19,6 +19,8 @@ const swaggerSpec = swaggerJsdoc(options);
 
 function setupSwagger(app) {
   app.use('/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+  // 모두 /api/docs로 동작하도록 다시 마운트
+  app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 }
 
 export default setupSwagger;
