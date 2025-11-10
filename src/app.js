@@ -10,8 +10,10 @@ import manualsRouter from './routes/manuals.js';
 import orderItemsRouter from './routes/order_items.js';
 import ordersRouter from './routes/orders.js';
 import productsRouter from './routes/products.js';
+
 dotenv.config();
 const app = express();
+app.set('trust proxy', 1);
 app.use(express.json({ type: ['application/json', 'application/merge-patch+json'] }));
 app.use(express.urlencoded({ extended: true }));
 
@@ -31,5 +33,6 @@ app.use('/products', productsRouter);
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 서버가 http://localhost:${PORT}에서 구동 중입니다.`);
-  console.log(`📖 Swagger 문서는 http://localhost:${PORT}/api-docs 주소로 가세요.`);
+  console.log(`📖 Swagger 문서 (로컬): http://localhost:${PORT}/docs`);
+  console.log(`📖 Swagger 문서 (Nginx): https://aicc-web.duckdns.org/api/docs`);
 });
