@@ -33,6 +33,6 @@ app.use('/products', productsRouter);
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 서버가 http://localhost:${PORT}에서 구동 중입니다.`);
-  console.log(`📖 Swagger 문서 (로컬): http://localhost:${PORT}/docs`);
-  console.log(`📖 Swagger 문서 (Nginx): https://aicc-web.duckdns.org/api/docs`);
+  console.log(`📖 Swagger (로컬): http://localhost:${PORT}/api-docs`);
+  console.log(`📖 Swagger (배포): https://aicc-web.duckdns.org/api-docs`);
 });
