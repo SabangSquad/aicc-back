@@ -10,6 +10,7 @@ import manualsRouter from './routes/manuals.js';
 import orderItemsRouter from './routes/order_items.js';
 import ordersRouter from './routes/orders.js';
 import productsRouter from './routes/products.js';
+import chatRouter from './routes/chat.js';
 
 dotenv.config();
 const app = express();
@@ -28,6 +29,7 @@ app.use('/manuals', manualsRouter);
 app.use('/order-items', orderItemsRouter);
 app.use('/orders', ordersRouter);
 app.use('/products', productsRouter);
+app.use('/chat', chatRouter);
 
 // 서버 실행 - npm run dev
 const PORT = process.env.PORT || 3000;
