@@ -157,7 +157,7 @@ router.post("/", async (req, res) => {
  *                   example: 123
  *                 emotion:
  *                   type: string
- *                   example: "negative"
+ *                   example: "짜증"
  *                 summary:
  *                   type: string
  *                   example: "고객은 배송 지연에 대해 불만을 제기했고, 상담사는 사과와 도착 예정일을 안내했습니다."
