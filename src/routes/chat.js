@@ -128,6 +128,7 @@ router.post("/", async (req, res) => {
  *     summary: "상담 케이스 대화 로그 분석 (감정 + 요약 + 추천 답변)"
  *     description: |
  *       해당 상담의 메시지를 DB에서 조회하여 LLM에게 넘겨 다음과 같은 응답을 받습니다.
+ *       감정과 요약은 각각 cases 테이블의 emotion와 memo에 자동으로 들어갑니다.
  *       - 'emotion': 대화 전체에 대한 감정 (평온, 기쁨, 슬픔, 화남, 짜증)
  *       - 'summary': 상담 내용을 2~3문장으로 요약
  *       - 'suggested_answer': 상담사가 다음에 고객에게 보내면 좋은 추천 답변
