@@ -24,3 +24,7 @@ docker-data/
 
 # VSCode
 .vscode/
+
+# 더미데이터
+data/
+scripts/

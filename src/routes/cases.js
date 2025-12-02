@@ -147,6 +147,84 @@ router.post('/', async (req, res) => {
 /**
  * @swagger
  * /cases/{case_id}:
+ *   get:
+ *     summary: "상담 정보 조회"
+ *     description: "해당 상담의 정보를 조회합니다."
+ *     tags:
+ *       - Cases
+ *     parameters:
+ *       - in: path
+ *         name: case_id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: "상담 ID"
+ *     responses:
+ *       200:
+ *         description: "상담 정보"
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 agent_id: 
+ *                   type: integer 
+ *                   description: 상담원 ID
+ *                 case_id: 
+ *                   type: integer 
+ *                   description: 상담 ID
+ *                 customer_id:
+ *                   type: integer
+ *                   description: 고객 ID
+ *                 title:
+ *                   type: string
+ *                   description: 상담 제목
+ *                 status:  
+ *                   type: string
+ *                   description: 상담 상태
+ *                 created_at:
+ *                   type: string
+ *                   format: date-time
+ *                   description: 상담 생성 시각
+ *                 closed_at:
+ *                   type: string
+ *                   format: date-time
+ *                   nullable: true
+ *                   description: 상담 종료 시각
+ *                 memo:
+ *                   type: string
+ *                   description: 메모
+ *                 content:
+ *                   type: string
+ *                   description: 상담 내용
+ *                 order_id:
+ *                   type: integer
+ *                   description: 주문 ID
+ *                 category:
+ *                   type: string
+ *                   description: 카테고리
+ *                 emotion:
+ *                   type: string
+ *                   description: 고객 감정
+ *             example:
+ *               agent_id: 1
+ *               case_id: 1
+ *               customer_id: 1
+ *               title: "환불하고 싶어요."
+ *               status: "대기"
+ *               created_at: "2025-09-01T04:08:31.231Z"
+ *               closed_at: null
+ *               memo: "화가 많이 남"
+ *               content: "상품 품질이 정말 별로네요."
+ *               order_id: 1
+ *               category: "환불"
+ *               emotion: "화남"
+ *       400:
+ *         description: "잘못된 요청"
+ *       404:
+ *         description: "상담을 찾을 수 없습니다."
+ *       500:
+ *         description: "서버 오류"
  *   patch:
  *     summary: "상담 정보 수정"
  *     description: |
@@ -166,7 +244,7 @@ router.post('/', async (req, res) => {
  *     requestBody:
  *       required: true
  *       content:
- *         application/merge-patch+json:
+ *         application/json:
  *           schema:
  *             type: object
  *             properties:
@@ -182,16 +260,6 @@ router.post('/', async (req, res) => {
  *                 type: string
  *                 description: "고객 감정 (비어있지 않은 문자열)"
  *                 example: "평온"
- *         application/json:
- *           schema:
- *             type: object
- *             properties:
- *               status:
- *                 type: string
- *               memo:
- *                 type: string
- *               emotion:
- *                 type: string
  *     responses:
  *       200:
  *         description: "수정된 상담 정보"
@@ -214,6 +282,12 @@ router.post('/', async (req, res) => {
  *                   type: string
  *                   format: date-time
  *                   nullable: true
+ *             example:
+ *               case_id: 1 
+ *               status: "상담"
+ *               memo: "괜찮으심"
+ *               emotion: "평온"
+ *               closed_at: "2025-09-01T04:08:31.231Z"
  *       400:
  *         description: "잘못된 요청"
  *       404:
@@ -221,7 +295,30 @@ router.post('/', async (req, res) => {
  *       500:
  *         description: "서버 오류"
  */
-router.patch('/:case_id', async (req, res) => {
+router.route('/:case_id')
+  .get(async (req, res) => {
+    try {
+      const caseId = Number.parseInt(req.params.case_id, 10);
+      if (Number.isNaN(caseId)) {
+        return res.status(400).json({ error: '유효하지 않은 상담 ID입니다.' });
+      }
+
+      const result = await pool.query(
+        'SELECT c.agent_id, c.case_id, c.customer_id, c.title, c.status, c.created_at, c.closed_at, c.memo, c.content, c.order_id, c.category, c.emotion FROM cases c WHERE case_id = $1',
+        [caseId]
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({ error: '상담을 찾을 수 없습니다.' });
+      }
+
+      return res.json(result.rows[0]);
+    } catch (err) {
+      console.error('상담 정보 조회 오류:', err);
+      return res.status(500).json({ error: '서버 오류가 발생했습니다.' });
+    }
+  })
+  .patch( async (req, res) => {
   try {
     const caseId = Number.parseInt(req.params.case_id, 10);
     if (Number.isNaN(caseId)) {

@@ -300,6 +300,7 @@ router.route('/:agent_id')
  *                         description: 고객 감정
 
  *             example:
+ *               agent_id: 1
  *               case_id: 1
  *               customer_id: 1
  *               title: "환불하고 싶어요."

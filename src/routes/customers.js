@@ -247,7 +247,7 @@ router.patch('/:customer_id', async (req, res) => {
  *         name: status
  *         schema:
  *           type: string
- *           enum: ["대기", "상담", "종료"]
+ *           enum: ["대기", "상담", "종료", "AI자동해결"]
  *         description: "상담 상태 필터"
  *       - in: query
  *         name: category
@@ -340,8 +340,8 @@ router.get('/:customer_id/cases', async (req, res) => {
       if (st.length === 0) {
         return res.status(400).json({ error: 'status는 빈 문자열일 수 없습니다.' });
       }
-      const ALLOWED_STATUS = new Set(['대기', '상담', '종료']);
-      if (!ALLOWED_STATUS.has(st)) return res.status(400).json({ error: 'status는 대기, 상담, 종료 중 하나여야 합니다.' });
+      const ALLOWED_STATUS = new Set(['대기', '상담', '종료', 'AI자동해결']);
+      if (!ALLOWED_STATUS.has(st)) return res.status(400).json({ error: 'status는 대기, 상담, 종료, AI자동해결 중 하나여야 합니다.' });
 
       where.push(`c.status = $${idx++}`);
       params.push(st);

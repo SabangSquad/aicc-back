@@ -13,7 +13,7 @@
   "type": "module",
   "dependencies": {
     "@aws-sdk/client-bedrock": "^3.936.0",
-    "@aws-sdk/client-bedrock-runtime": "^3.936.0",
+    "@aws-sdk/client-bedrock-runtime": "^3.941.0",
     "axios": "^1.13.2",
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
