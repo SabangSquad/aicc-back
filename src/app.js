@@ -6,7 +6,7 @@ import setupSwagger from './swagger.js';
 
 // 인증 및 미들웨어
 import { setupPassport } from './config/passport.js';
-import { isAuthorized } from './middlewares/auth.js';
+import { isAuthorized, isAdmin } from './middlewares/auth.js';
 
 // 라우터 import
 import authRouter from './routes/auth.js';
