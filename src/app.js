@@ -43,14 +43,14 @@ app.use(passport.initialize());
 app.use(passport.session());
 setupPassport();
 
-// 3. Swagger
-setupSwagger(app);
-
-// 4. 공개 라우터 (로그인 절차)
+// 3. 공개 라우터
 app.use('/auth', authRouter);
 
-// 5. 통합 권한 적용 (여기서부터는 어드민/유저 구분 없이 로그인만 하면 다 됨)
+// 4. 통합 권한 적용
 app.use(isAuthorized);
+
+// 5. Swagger
+setupSwagger(app);
 
 // 6. 모든 라우터 등록
 app.use('/agents', agentsRouter);
