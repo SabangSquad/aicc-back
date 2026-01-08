@@ -21,15 +21,15 @@ export const setupPassport = () => {
         }
 
         // 2. DB 유저 체크
-        const result = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
+        const result = await pool.query('SELECT * FROM agents WHERE email = $1', [email]);
+        const dbUser = result.rows[0];
         
-        if (result.rows.length > 0) {
-          const dbUser = result.rows[0];
+        if (dbUser) {
+          // agents 테이블에 있으면 로그인 허용
           return done(null, { ...dbUser, role: 'USER' });
+        } else {
+          return done(null, false, { message: '등록되지 않은 사용자입니다.' });
         }
-
-        // DB에 유저가 없는 경우
-        return done(null, false, { message: '등록되지 않은 사용자입니다.' });
 
       } catch (err) {
         console.error("인증 과정 중 DB 오류 발생:", err.message);
