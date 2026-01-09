@@ -1,5 +1,6 @@
 import express from 'express';
 import passport from 'passport';
+import jwt from 'jsonwebtoken';
 
 const router = express.Router();
 
@@ -20,7 +21,24 @@ router.get('/google/callback', (req, res, next) => {
     // 로그인 성공 처리
     req.logIn(user, (err) => {
       if (err) return next(err);
-      return res.json({ success: true, message: "로그인 성공", user });
+
+      // 1. JWT 토큰 생성 (유저 ID, 이메일, 역할 포함)
+      const token = jwt.sign(
+        { id: user.id, email: user.email, role: user.role },
+        process.env.JWT_SECRET, // .env에 정의된 비밀키
+        { expiresIn: '24h' }    // 토큰 유효 시간
+      );
+
+      // 2. 쿠키에 토큰 설정
+      res.cookie('auth_token', token, {
+        httpOnly: true,       // 자바스크립트로 접근 불가 (XSS 방지)
+        secure: true,         // HTTPS 환경에서만 전송
+        sameSite: 'lax',      // CSRF 보호
+        maxAge: 24 * 60 * 60 * 1000 // 24시간 유지
+      });
+
+      // 3. /home으로 리다이렉트
+      return res.redirect('https://aicc-web.duckdns.org/home');
     });
   })(req, res, next);
 });
