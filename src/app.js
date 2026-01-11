@@ -32,7 +32,7 @@ app.use(session({
   resave: false,
   saveUninitialized: false,
   cookie: { 
-    secure: true, // HTTPS 환경
+    secure: process.env.NODE_ENV === 'production',
     httpOnly: true,
     sameSite: 'lax' // 크로스 사이트 요청 이슈 방지
   },
