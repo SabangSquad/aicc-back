@@ -5,7 +5,7 @@ import jwt from 'jsonwebtoken';
 const router = express.Router();
 
 router.get('/google', (req, res, next) => {
-  const redirectTo = req.query.redirect_to || 'http://localhost:3000';
+  const redirectTo = req.query.redirect_to || 'https://aicc-web.duckdns.org';
   
   passport.authenticate('google', { 
     scope: ['profile', 'email'],
