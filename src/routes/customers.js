@@ -53,6 +53,10 @@ const router = express.Router();
  *                 grade:
  *                   type: string
  *                   nullable: true
+ *                 _links:
+ *                   type: array
+ *                   items:
+ *                     type: object
  *             example:
  *               customer_id: 1
  *               name: "홍길동"
@@ -62,6 +66,19 @@ const router = express.Router();
  *               joined_at: "2025-09-01T04:08:31.231Z"
  *               points: 1234
  *               grade: "VIP"
+ *               _links:
+ *                 - rel: "self"
+ *                   href: "/customers/1"
+ *                   method: "GET"
+ *                 - rel: "update"
+ *                   href: "/customers/1"
+ *                   method: "PATCH"
+ *                 - rel: "cases"
+ *                   href: "/customers/1/cases"
+ *                   method: "GET"
+ *                 - rel: "orders"
+ *                   href: "/customers/1/orders"
+ *                   method: "GET"
  *       400:
  *         description: "잘못된 요청"
  *       404:
@@ -85,7 +102,16 @@ router.get('/:customer_id', async (req, res) => {
       return res.status(404).json({ error: '고객을 찾을 수 없습니다.' });
     }
 
-    return res.json(result.rows[0]);
+    const customer = result.rows[0];
+    return res.json({
+      ...customer,
+      _links: [
+        { rel: 'self', href: `/customers/${customerId}`, method: 'GET' },
+        { rel: 'update', href: `/customers/${customerId}`, method: 'PATCH' },
+        { rel: 'cases', href: `/customers/${customerId}/cases`, method: 'GET' },
+        { rel: 'orders', href: `/customers/${customerId}/orders`, method: 'GET' }
+      ]
+    });
   } catch (err) {
     console.error('고객 조회 오류:', err);
     return res.status(500).json({ error: '서버 오류가 발생했습니다.' });
@@ -128,13 +154,13 @@ router.get('/:customer_id', async (req, res) => {
  *               grade:
  *                 type: string
  *                 nullable: true
- *             example:
- *               name: "홍길동"
- *               address: "인천 연수구 송도 1동"
- *               phone: "010-1234-5678"
- *               email: "hong@test.com"
- *               points: 1234
- *               grade: "VIP"
+ *           example:
+ *             name: "홍길동"
+ *             address: "인천 연수구 송도 1동"
+ *             phone: "010-1234-5678"
+ *             email: "hong@test.com"
+ *             points: 1234
+ *             grade: "VIP"
  *     responses:
  *       200:
  *         description: "수정된 고객 정보"
@@ -159,6 +185,18 @@ router.get('/:customer_id', async (req, res) => {
  *                 grade:
  *                   type: string
  *                   nullable: true
+ *                 _links:
+ *                   type: array
+ *             example:
+ *               customer_id: 1
+ *               name: "홍길동"
+ *               _links:
+ *                 - rel: "self"
+ *                   href: "/customers/1"
+ *                   method: "PATCH"
+ *                 - rel: "get_customer"
+ *                   href: "/customers/1"
+ *                   method: "GET"
  *       400:
  *         description: "잘못된 요청"
  *       404:
@@ -186,7 +224,7 @@ router.patch('/:customer_id', async (req, res) => {
       const simpleEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       if (!simpleEmail.test(email)) {
         return res.status(400).json({ error: '유효하지 않은 이메일 형식입니다.' });
-      }
+    }
     }
 
     const fields = { name, address, phone, email, points, grade };
@@ -211,7 +249,7 @@ router.patch('/:customer_id', async (req, res) => {
       UPDATE customers
       SET ${updates.join(', ')}
       WHERE customer_id = $${idx}
-      RETURNING name, address, phone, email, points, grade
+      RETURNING customer_id, name, address, phone, email, points, grade
     `;
     const result = await pool.query(sql, values);
 
@@ -219,7 +257,14 @@ router.patch('/:customer_id', async (req, res) => {
       return res.status(404).json({ error: '수정할 고객을 찾을 수 없습니다.' });
     }
 
-    return res.json(result.rows[0]);
+    const updatedCustomer = result.rows[0];
+    return res.json({
+      ...updatedCustomer,
+      _links: [
+        { rel: 'self', href: `/customers/${customerId}`, method: 'PATCH' },
+        { rel: 'get_customer', href: `/customers/${customerId}`, method: 'GET' }
+      ]
+    });
   } catch (err) {
     console.error('고객 수정 오류:', err);
     return res.status(500).json({ error: '서버 오류가 발생했습니다.' });
@@ -265,57 +310,21 @@ router.patch('/:customer_id', async (req, res) => {
  *               properties:
  *                 data:
  *                   type: array
- *                   items:
- *                     type: object
- *                     properties:
- *                       agent_id:
- *                         type: integer
- *                         description: 상담원 ID
- *                       case_id:
- *                         type: integer
- *                         description: 상담 ID
- *                       title:
- *                         type: string
- *                         description: 상담 제목
- *                       status:
- *                         type: string
- *                         description: 상담 상태
- *                       created_at:
- *                         type: string
- *                         format: date-time
- *                         description: 상담 생성 시각
- *                       closed_at:
- *                         type: string
- *                         format: date-time
- *                         nullable: true
- *                         description: 상담 종료 시각
- *                       memo: 
- *                         type: string
- *                         description: 메모
- *                       content:
- *                         type: string
- *                         description: 상담 내용
- *                       order_id:
- *                         type: integer
- *                         description: 주문 ID
- *                       category:
- *                         type: string
- *                         description: 카테고리
- *                       emotion:
- *                         type: string
- *                         description: 감정
+ *                 _links:
+ *                   type: array
  *             example:
- *               agent_id: 1
- *               case_id: 1
- *               title: "환불하고 싶어요."
- *               status: "대기"
- *               created_at: "2025-09-01T04:08:31.231Z"
- *               closed_at: null
- *               "memo": "급한 사항임"
- *               content: "상품 품질이 정말 별로네요."
- *               order_id: 1
- *               category: "환불"
- *               emotion: "화남"
+ *               data:
+ *                 - agent_id: 1
+ *                   case_id: 1
+ *                   title: "환불하고 싶어요."
+ *                   status: "대기"
+ *               _links:
+ *                 - rel: "self"
+ *                   href: "/customers/1/cases"
+ *                   method: "GET"
+ *                 - rel: "get_customer"
+ *                   href: "/customers/1"
+ *                   method: "GET"
  *       400:
  *         description: "잘못된 요청"
  *       500:
@@ -334,7 +343,6 @@ router.get('/:customer_id/cases', async (req, res) => {
     const params = [customerId];
     let idx = 2;
 
-    // status: 공백 방지 (+ 선택적으로 허용값 제한)
     if (status !== undefined) {
       const st = String(status).trim();
       if (st.length === 0) {
@@ -347,7 +355,6 @@ router.get('/:customer_id/cases', async (req, res) => {
       params.push(st);
     }
 
-    // category: 문자열, 공백 방지
     if (category !== undefined) {
       const cat = String(category).trim();
       if (cat.length === 0) {
@@ -367,7 +374,13 @@ router.get('/:customer_id/cases', async (req, res) => {
     `;
 
     const { rows } = await pool.query(listSql, params);
-    return res.json({ data: rows });
+    return res.json({ 
+      data: rows,
+      _links: [
+        { rel: 'self', href: `/customers/${customerId}/cases${req._parsedUrl.search || ''}`, method: 'GET' },
+        { rel: 'get_customer', href: `/customers/${customerId}`, method: 'GET' }
+      ]
+    });
   } catch (err) {
     console.error('상담 목록 조회 오류:', err);
     return res.status(500).json({ error: '서버 오류가 발생했습니다.' });
@@ -405,23 +418,19 @@ router.get('/:customer_id/cases', async (req, res) => {
  *               properties:
  *                 data:
  *                   type: array
- *                   items:
- *                     type: object
- *                     properties:
- *                       order_id:
- *                         type: integer
- *                       status:
- *                         type: string
- *                       ordered_at:
- *                         type: string
- *                         format: date-time
- *                       total_price:
- *                         type: integer
+ *                 _links:
+ *                   type: array
  *             example:
- *               order_id: 1
- *               status: "준비"
- *               ordered_at: "2025-09-01T04:08:31.231Z"
- *               total_price: 4000
+ *               data:
+ *                 - order_id: 1
+ *                   status: "준비"
+ *               _links:
+ *                 - rel: "self"
+ *                   href: "/customers/1/orders"
+ *                   method: "GET"
+ *                 - rel:  "get_customer"
+ *                   href: "/customers/1"
+ *                   method: "GET"
  *       400:
  *         description: "잘못된 요청"
  *       500:
@@ -440,7 +449,6 @@ router.get('/:customer_id/orders', async (req, res) => {
     const params = [customerId];
     let idx = 2;
 
-    // status: 공백 방지 (+ 선택적으로 허용값 제한)
     if (status !== undefined) {
       const st = String(status).trim();
       if (st.length === 0) {
@@ -463,7 +471,13 @@ router.get('/:customer_id/orders', async (req, res) => {
     `;
 
     const { rows } = await pool.query(listSql, params);
-    return res.json({ data: rows });
+    return res.json({ 
+      data: rows,
+      _links: [
+        { rel: 'self', href: `/customers/${customerId}/orders${req._parsedUrl.search || ''}`, method: 'GET' },
+        { rel: 'get_customer', href: `/customers/${customerId}`, method: 'GET' }
+      ]
+    });
   } catch (err) {
     console.error('주문 목록 조회 오류:', err);
     return res.status(500).json({ error: '서버 오류가 발생했습니다.' });
@@ -494,22 +508,17 @@ router.get('/:customer_id/orders', async (req, res) => {
  *               properties:
  *                 order_id:
  *                   type: integer
- *                   description: 주문 ID
- *                 ordered_at:
- *                   type: string
- *                   format: date-time
- *                   description: 주문 일자
- *                 status:
- *                   type: string
- *                   description: 주문 상태
- *                 total_price:
- *                   type: integer
- *                   description: 총합 가격
+ *                 _links:
+ *                   type: array
  *             example:
  *               order_id: 1
- *               ordered_at: "2025-09-01T04:08:31.231Z"
- *               status: "대기"
- *               total_price: 4000
+ *               _links:
+ *                 - rel: "self"
+ *                   href: "/customers/1/orders"
+ *                   method: "POST"
+ *                 - rel: "get_customer"
+ *                   href: "/customers/1"
+ *                   method: "GET"
  *       400:
  *         description: "잘못된 요청"
  *       404:
@@ -517,16 +526,13 @@ router.get('/:customer_id/orders', async (req, res) => {
  *       500:
  *         description: "서버 오류"
  */
-
 router.post('/:customer_id/orders', async (req, res) => {
-  // path 파라미터만 사용
   const customerId = Number.parseInt(req.params.customer_id, 10);
   if (!Number.isInteger(customerId) || customerId <= 0) {
     return res.status(400).json({ error: '유효하지 않은 고객 ID입니다.' });
   }
 
   try {
-    // customer_id만으로 주문 생성
     const { rows } = await pool.query(
       `INSERT INTO orders (customer_id)
        VALUES ($1)
@@ -534,13 +540,17 @@ router.post('/:customer_id/orders', async (req, res) => {
       [customerId]
     );
 
-    return res.status(201).json(rows[0]);
+    const newOrder = rows[0];
+    return res.status(201).json({
+      ...newOrder,
+      _links: [
+        { rel: 'self', href: `/customers/${customerId}/orders`, method: 'POST' },
+        { rel: 'get_customer', href: `/customers/${customerId}`, method: 'GET' }
+      ]
+    });
   } catch (err) {
     return res.status(500).json({ error: '서버 오류' });
   }
 });
-
-
-
 
 export default router;

@@ -50,12 +50,29 @@ const router = express.Router();
  *                 total_price:
  *                   type: integer
  *                   description: 전체 가격
+ *                 _links:
+ *                   type: array
+ *                   items:
+ *                     type: object
  *             example:
  *               order_id: 1
  *               customer_id: 1
  *               status: "완료"
  *               total_price: 20000
  *               ordered_at: "2025-09-01T04:08:31.231Z"
+ *               _links:
+ *                 - rel: "self"
+ *                   href: "/orders/1"
+ *                   method: "GET"
+ *                 - rel: "update"
+ *                   href: "/orders/1"
+ *                   method: "PATCH"
+ *                 - rel: "delete"
+ *                   href: "/orders/1"
+ *                   method: "DELETE"
+ *                 - rel: "items"
+ *                   href: "/orders/1/order-items"
+ *                   method: "GET"
  *       400:
  *         description: "잘못된 요청"
  *       404:
@@ -107,10 +124,19 @@ const router = express.Router();
  *                 total_price:
  *                   type: integer
  *                   description: 전체 가격
+ *                 _links:
+ *                   type: array
  *             example:
  *               ordered_at: "2025-09-01T04:08:31.231Z"
  *               status: "준비"
  *               total_price: 5000
+ *               _links:
+ *                 - rel: "self"
+ *                   href: "/orders/1"
+ *                   method: "PATCH"
+ *                 - rel: "get_order"
+ *                   href: "/orders/1"
+ *                   method: "GET"
  *       400:
  *         description: "잘못된 요청"
  *       404:
@@ -124,7 +150,7 @@ const router = express.Router();
  *       - Orders
  *     parameters:
  *       - in: path
- *         name: id
+ *         name: order_id
  *         required: true
  *         schema:
  *           type: integer
@@ -132,6 +158,21 @@ const router = express.Router();
  *     responses:
  *       200:
  *         description: "삭제 성공"
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
+ *                 _links:
+ *                   type: array
+ *             example:
+ *               message: "order 1 deleted"
+ *               _links:
+ *                 - rel: "list"
+ *                   href: "/orders"
+ *                   method: "GET"
  *       400:
  *         description: "잘못된 요청"
  *       404:
@@ -157,7 +198,17 @@ router.get('/:order_id', async (req, res) => {
     if (rows.length === 0) {
       return res.status(404).json({ error: '주문을 찾을 수 없습니다.' });
     }
-    return res.json(rows[0]);
+
+    const orderData = rows[0];
+    return res.json({
+      ...orderData,
+      _links: [
+        { rel: 'self', href: `/orders/${orderId}`, method: 'GET' },
+        { rel: 'update', href: `/orders/${orderId}`, method: 'PATCH' },
+        { rel: 'delete', href: `/orders/${orderId}`, method: 'DELETE' },
+        { rel: 'items', href: `/orders/${orderId}/order-items`, method: 'GET' }
+      ]
+    });
   } catch (err) {
     console.error('주문 조회 오류:', err);
     return res.status(500).json({ error: '서버 오류가 발생했습니다.' });
@@ -187,13 +238,22 @@ router.patch('/:order_id', async (req, res) => {
       UPDATE orders
       SET status = $1
       WHERE order_id = $2
-      RETURNING order_id, status
+      RETURNING order_id, ordered_at, status, total_price
     `;
     const { rows } = await pool.query(sql, [newStatus, orderId]);
     if (rows.length === 0) {
       return res.status(404).json({ error: '주문을 찾을 수 없습니다.' });
     }
-    return res.json(rows[0]);
+
+    const updatedOrder = rows[0];
+    return res.json({
+      ...updatedOrder,
+      _links: [
+        { rel: 'self', href: `/orders/${orderId}`, method: 'PATCH' },
+        { rel: 'get_order', href: `/orders/${orderId}`, method: 'GET' },
+        { rel: 'items', href: `/orders/${orderId}/order-items`, method: 'GET' }
+      ]
+    });
   } catch (err) {
     console.error('주문 상태 변경 오류:', err);
     return res.status(500).json({ error: '서버 오류가 발생했습니다.' });
@@ -221,7 +281,12 @@ router.delete('/:order_id', async (req, res) => {
     }
 
     await client.query('COMMIT');
-    return res.json({ message: `order ${orderId} deleted` });
+    return res.json({ 
+      message: `order ${orderId} deleted`,
+      _links: [
+        { rel: 'list', href: '/orders', method: 'GET' }
+      ]
+    });
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('주문 삭제 오류:', err);
@@ -254,23 +319,25 @@ router.delete('/:order_id', async (req, res) => {
  *             schema:
  *               type: object
  *               properties:
- *                 order_item_id:
- *                   type: integer
- *                   description: 주문 품목 ID
- *                 product_id:
- *                   type: integer
- *                   description: 상품 ID
- *                 quantity:
- *                   type: integer
- *                   description: 주문 수량
- *                 total_price:
- *                   type: integer
- *                   description: 전체 가격
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                 _links:
+ *                   type: array
  *             example:
- *               order_item_id: 1
- *               product_id: 1
- *               quantity: 3
- *               total_price: 25000
+ *               data:
+ *                 - order_item_id: 1
+ *                   product_id: 1
+ *                   quantity: 3
+ *                   total_price: 25000
+ *               _links:
+ *                 - rel: "self"
+ *                   href: "/orders/1/order-items"
+ *                   method: "GET"
+ *                 - rel: "order"
+ *                   href: "/orders/1"
+ *                   method: "GET"
  *       400:
  *         description: "잘못된 요청"
  *       404:
@@ -294,9 +361,9 @@ router.delete('/:order_id', async (req, res) => {
  *         application/json:
  *           schema:
  *             type: object
- *             required: [prodcut_id, quantity]
+ *             required: [product_id, quantity]
  *             properties:
- *               prodcut_id:
+ *               product_id:
  *                 type: integer
  *               quantity:
  *                 type: integer
@@ -323,11 +390,20 @@ router.delete('/:order_id', async (req, res) => {
  *                 total_price:
  *                   type: integer
  *                   description: 총합 가격
+ *                 _links:
+ *                   type: array
  *             example:
  *               order_item_id: 1
  *               product_id: 1
  *               quantity: 3
  *               total_price: 50000
+ *               _links:
+ *                 - rel: "self"
+ *                   href: "/orders/1/order-items"
+ *                   method: "POST"
+ *                 - rel: "order"
+ *                   href: "/orders/1"
+ *                   method: "GET"
  *       400:
  *         description: "잘못된 요청"
  *       404:
@@ -354,7 +430,14 @@ router.get('/:order_id/order-items', async (req, res) => {
     if (rows.length === 0) {
       return res.status(404).json({ error: '주문 품목을 찾을 수 없습니다.' });
     }
-    return res.json(rows);
+
+    return res.json({
+      data: rows,
+      _links: [
+        { rel: 'self', href: `/orders/${orderId}/order-items`, method: 'GET' },
+        { rel: 'order', href: `/orders/${orderId}`, method: 'GET' }
+      ]
+    });
   } catch (err) {
     return res.status(500).json({ error: '서버 오류가 발생했습니다.' });
   }
@@ -364,7 +447,7 @@ router.post('/:order_id/order-items', async (req, res) => {
 
   const orderId = Number.parseInt(req.params.order_id, 10);
   if (Number.isNaN(orderId)) {
-    return res.status(400).json({ error: '유효하지 않은 상담 ID입니다.' });
+    return res.status(400).json({ error: '유효하지 않은 주문 ID입니다.' });
   }
 
   const { product_id, quantity } = req.body;
@@ -384,7 +467,14 @@ router.post('/:order_id/order-items', async (req, res) => {
       [orderId, product_id, quantity]
     );
 
-    res.status(201).json(rows[0]);
+    const newItem = rows[0];
+    res.status(201).json({
+      ...newItem,
+      _links: [
+        { rel: 'self', href: `/orders/${orderId}/order-items`, method: 'POST' },
+        { rel: 'order', href: `/orders/${orderId}`, method: 'GET' }
+      ]
+    });
   } catch (err) {
     console.log(err);
     res.status(500).json({ error: '서버 내부 오류가 발생했습니다.' });

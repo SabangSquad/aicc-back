@@ -19,30 +19,30 @@ const router = express.Router();
  *     tags: [Products]
  *     responses:
  *       200:
- *         description: 상담 목록
+ *         description: 상담 목록 (HATEOAS 적용)
  *         content:
  *           application/json:
  *             schema:
  *               type: object
  *               properties:
- *                 data:
- *                   type: array
- *                   items:
- *                     type: object
- *                     properties:
- *                       product_id: 
- *                         type: integer 
- *                         description: 상품 ID
- *                       name:
- *                         type: string
- *                         description: 상품명
- *                       price:  
- *                         type: integer
- *                         description: 상품 가격
+ *                 data: { type: array }
+ *                 _links: { type: array }
  *             example:
- *               product_id: 1
- *               name: "선풍기"
- *               price: 15000
+ *               data:
+ *                 - product_id: 1
+ *                   name: "선풍기"
+ *                   price: 15000
+ *                   _links:
+ *                     - rel: "update"
+ *                       href: "/products/1"
+ *                       method: "PATCH"
+ *               _links:
+ *                 - rel: "self"
+ *                   href: "/products"
+ *                   method: "GET"
+ *                 - rel: "create"
+ *                   href: "/products"
+ *                   method: "POST"
  *       400:
  *         description: 잘못된 요청
  *       500:
@@ -58,7 +58,21 @@ router.get('/', async (_, res) => {
     `;
 
     const { rows } = await pool.query(listSql);
-    return res.json({ data: rows });
+    
+    const data = rows.map(row => ({
+      ...row,
+      _links: [
+        { rel: 'update', href: `/products/${row.product_id}`, method: 'PATCH' }
+      ]
+    }));
+
+    return res.json({ 
+      data,
+      _links: [
+        { rel: 'self', href: '/products', method: 'GET' },
+        { rel: 'create', href: '/products', method: 'POST' }
+      ]
+    });
   } catch (err) {
     return res.status(500).json({ error: '서버 오류가 발생했습니다.' });
   }
@@ -98,17 +112,23 @@ router.get('/', async (_, res) => {
  *               properties:
  *                 product_id:
  *                   type: integer
- *                   description: 상품 ID
  *                 name: 
  *                   type: string
- *                   description: 상품명
  *                 price:
  *                   type: integer
- *                   description: 상품 가격
+ *                 _links:
+ *                   type: array
  *             example:
  *               product_id: 1
  *               name: "선풍기"
  *               price: 15000
+ *               _links:
+ *                 - rel: "self"
+ *                   href: "/products/1"
+ *                   method: "GET"
+ *                 - rel: "update"
+ *                   href: "/products/1"
+ *                   method: "PATCH"
  *       400: 
  *         description: "잘못된 요청"
  *       404: 
@@ -139,7 +159,14 @@ router.post('/', async (req, res) => {
       [name, price]
     );
 
-    res.status(201).json(rows[0]);
+    const newProduct = rows[0];
+    res.status(201).json({
+      ...newProduct,
+      _links: [
+        { rel: 'self', href: `/products/${newProduct.product_id}`, method: 'GET' },
+        { rel: 'update', href: `/products/${newProduct.product_id}`, method: 'PATCH' }
+      ]
+    });
   } catch (err) {
     res.status(500).json({ error: '서버 내부 오류가 발생했습니다.'});
   }
@@ -191,10 +218,19 @@ router.post('/', async (req, res) => {
  *                 price:
  *                   type: integer
  *                   description: 가격
+ *                 _links:
+ *                   type: array
  *             example:
  *               product_id: 1
  *               name: "화분"
  *               price: 3500
+ *               _links:
+ *                 - rel: "self"
+ *                   href: "/products/1"
+ *                   method: "PATCH"
+ *                 - rel: "list"
+ *                   href: "/products"
+ *                   method: "GET"
  *       400:
  *         description: 잘못된 요청
  *       404:
@@ -253,7 +289,13 @@ router.route('/:product_id')
         return res.status(404).json({ error: '상품을 찾을 수 없습니다.' });
       }
 
-      return res.status(200).json(result.rows[0]);
+      return res.status(200).json({
+        ...result.rows[0],
+        _links: [
+          { rel: 'self', href: `/products/${productId}`, method: 'PATCH' },
+          { rel: 'list', href: '/products', method: 'GET' }
+        ]
+      });
     } catch (err) {
       console.error('상품 수정 오류:', err);
       return res.status(500).json({ error: '서버 오류가 발생했습니다.' });

@@ -58,15 +58,31 @@ const router = express.Router();
  *                         type: string
  *                         description: 카테고리
  *                       content:
- *                         type: string, 
+ *                         type: string 
  *                         description: 매뉴얼 내용
+ *                       _links:
+ *                         type: array
+ *                 _links:
+ *                   type: array
  *             example:
- *               manual_id: 1
- *               title: "로그인 오류 해결 방법"
- *               edited_at: "2025-09-01T04:08:31.231Z"
- *               file_url: "http://dummyimage.com/192x100.png/ff4444/ffffff"
- *               category: "로그인"
- *               content: "재부팅을 요청한다."
+ *               data:
+ *                 - manual_id: 1
+ *                   title: "로그인 오류 해결 방법"
+ *                   edited_at: "2025-09-01T04:08:31.231Z"
+ *                   file_url: "http://dummyimage.com/192x100.png/ff4444/ffffff"
+ *                   category: "로그인"
+ *                   content: "재부팅을 요청한다."
+ *                   _links:
+ *                     - rel: "update"
+ *                       href: "/manuals/1"
+ *                       method: "PATCH"
+ *               _links:
+ *                 - rel: "self"
+ *                   href: "/manuals"
+ *                   method: "GET"
+ *                 - rel: "create"
+ *                   href: "/manuals"
+ *                   method: "POST"
  *       400:
  *         description: 잘못된 요청
  *       500:
@@ -99,7 +115,21 @@ router.get('/', async (req, res) => {
     `;
 
     const { rows } = await pool.query(listSql, params);
-    return res.json({ data: rows });
+    
+    const data = rows.map(row => ({
+      ...row,
+      _links: [
+        { rel: 'update', href: `/manuals/${row.manual_id}`, method: 'PATCH' }
+      ]
+    }));
+
+    return res.json({ 
+      data,
+      _links: [
+        { rel: 'self', href: `/manuals${req._parsedUrl.search || ''}`, method: 'GET' },
+        { rel: 'create', href: '/manuals', method: 'POST' }
+      ]
+    });
   } catch (err) {
     return res.status(500).json({ error: '서버 오류가 발생했습니다.' });
   }
@@ -146,7 +176,7 @@ router.get('/', async (req, res) => {
  *             schema:
  *               type: object
  *               properties:
- *                 manaul_id:
+ *                 manual_id:
  *                   type: integer
  *                   description: 매뉴얼 ID
  *                 title: 
@@ -164,7 +194,9 @@ router.get('/', async (req, res) => {
  *                   description: 카테고리
  *                 content:
  *                   type: string
- *                   description: 매뉴얼 내용\
+ *                   description: 매뉴얼 내용
+ *                 _links:
+ *                   type: array
  *             example:
  *               manual_id: 1
  *               title: "반품 접수 방법"
@@ -172,7 +204,13 @@ router.get('/', async (req, res) => {
  *               file_url: "http://dummyimage.com/192x100.png/ff4444/ffffff"
  *               category: "반품"
  *               content: "반품을 접수하기 위해서는 고객의 주문 내역에서 반품 신청을 누른다."
- *               
+ *               _links:
+ *                 - rel: "self"
+ *                   href: "/manuals"
+ *                   method: "POST"
+ *                 - rel: "update"
+ *                   href: "/manuals/1"
+ *                   method: "PATCH"
  *       400: 
  *         description: "잘못된 요청"
  *       404: 
@@ -210,7 +248,14 @@ router.post('/', async (req, res) => {
       [title, file_url, category, content]
     );
 
-    res.status(201).json(rows[0]);
+    const newManual = rows[0];
+    res.status(201).json({
+      ...newManual,
+      _links: [
+        { rel: 'self', href: '/manuals', method: 'POST' },
+        { rel: 'update', href: `/manuals/${newManual.manual_id}`, method: 'PATCH' }
+      ]
+    });
   } catch (err) {
     res.status(500).json({ error: '서버 내부 오류가 발생했습니다.'});
   }
@@ -282,6 +327,8 @@ router.post('/', async (req, res) => {
  *                 content:
  *                   type: string
  *                   description: 매뉴얼 내용
+ *                 _links:
+ *                   type: array
  *             example:
  *               manual_id: 1
  *               title: "교환 규정"
@@ -289,6 +336,13 @@ router.post('/', async (req, res) => {
  *               file_url: "http://dummyimage.com/237x100.png/cc0000/ffffff"
  *               category: "교환"
  *               content: "단순 변심은 30일 이내, 제품 문제는 3개월 이내 교환이 가능하다."
+ *               _links:
+ *                 - rel: "self"
+ *                   href: "/manuals/1"
+ *                   method: "PATCH"
+ *                 - rel: "list"
+ *                   href: "/manuals"
+ *                   method: "GET"
  *       400:
  *         description: 잘못된 요청
  *       404:
@@ -345,14 +399,18 @@ router.route('/:manual_id')
         return res.status(404).json({ error: '매뉴얼을 찾을 수 없습니다.' });
       }
 
-      return res.status(200).json(result.rows[0]);
+      const updatedManual = result.rows[0];
+      return res.status(200).json({
+        ...updatedManual,
+        _links: [
+          { rel: 'self', href: `/manuals/${manualId}`, method: 'PATCH' },
+          { rel: 'list', href: '/manuals', method: 'GET' }
+        ]
+      });
     } catch (err) {
       console.error('매뉴얼 수정 오류:', err);
       return res.status(500).json({ error: '서버 오류가 발생했습니다.' });
     }
   });
-
-
-
 
 export default router;
