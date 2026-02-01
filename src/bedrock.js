@@ -88,7 +88,6 @@ const graphState = {
     finalAnswer: null,
     reason: null,
     retryCount: null,
-    apiIterations: null,
   }
 };
 
@@ -148,108 +147,101 @@ const supervisorNode = async (state) => {
   return { intent };
 };
 
-
-// 노드 4-1: API Planner (AI가 다음 할 일을 결정)
-const apiPlannerNode = async (state) => {
-  console.log(`\n🚀 [Node 4-1: API Planner] 분석 중... (${(state.apiIterations || 0) + 1}/4)`);
+// 노드 4: API Agent
+const apiNode = async (state) => {
+  console.log(`\n🚀 [Node 4: API Agent] 연쇄 호출 시작...`);
   
-  // API 명세 로드 및 토큰 방어
-  let apiSpec = state.retrievedContext;
-  if (!apiSpec) {
-    apiSpec = await retrieveKB(state.userQuery, process.env.BEDROCK_API_KNOWLEDGE_BASE_ID);
-    if (apiSpec.length > 7000) apiSpec = apiSpec.substring(0, 7000) + "...";
-  }
+  const apiSpec = await retrieveKB(state.userQuery, process.env.BEDROCK_API_KNOWLEDGE_BASE_ID);
+  
+  let accumulatedContext = "아직 호출된 API 없음";
+  let iterations = 0;
+  const maxIterations = 4;
 
-  // 컨텍스트 길이 제한
-  let currentContext = state.sourceData || "아직 호출된 API 없음";
-  if (currentContext.length > 10000) {
-    currentContext = "...(이전 데이터 중략)..." + currentContext.slice(-8000);
-  }
-
-  const rawParams = await invokePrompt(process.env.BEDROCK_API_ARN, { 
-    user_input: state.userQuery,
-    case_id: state.caseId,
-    api_docs: apiSpec,
-    context: currentContext 
-  });
-
-  return { 
-    reason: rawParams, 
-    retrievedContext: apiSpec,
-    apiIterations: state.apiIterations || 0 
-  };
-};
-
-// 노드 4-2: API Executor (실제 API 호출 실행)
-const apiExecutorNode = async (state) => {
-  const rawParams = state.reason;
-  console.log(`   --- [회차 ${(state.apiIterations || 0) + 1} 실행] ---`);
-
-  try {
-    const jsonStart = rawParams.indexOf('{');
-    const jsonEnd = rawParams.lastIndexOf('}');
-    if (jsonStart === -1) throw new Error("JSON 형식을 찾을 수 없습니다.");
-
-    const cleanJson = rawParams.substring(jsonStart, jsonEnd + 1);
-    const callInfo = JSON.parse(cleanJson);
-
-    // AI가 작업을 끝냈다고 판단한 경우
-    if (callInfo.action === "finish") {
-      console.log(`   └─ ✅ 분석 완료 (Executor에서 스킵)`);
-      return { apiIterations: state.apiIterations + 1 };
-    }
-
-    // 필수 값인 'r'(경로)이 없는 경우 방어
-    if (!callInfo.r) {
-      throw new Error("API 경로(r) 정보가 누락되었습니다.");
-    }
-
-    const targetId = String(callInfo.i || state.caseId).replace(/\{|\}/g, "");
-    let targetUrl = `${process.env.ROOT_URL}/${callInfo.r}`;
+  while (iterations < maxIterations) {
+    console.log(`   --- [회차 ${iterations + 1} / ${maxIterations}] ---`);
     
-    // 에러 지점 수정
-    if (targetId !== "null" && typeof callInfo.r === 'string' && !callInfo.r.includes(targetId)) {
-      targetUrl += `/${targetId}`;
-    }
-
-    console.log(`   📡 [API 호출]: ${callInfo.m || 'GET'} ${targetUrl}`);
-
-    const res = await axios({
-      method: callInfo.m || 'GET',
-      url: targetUrl,
-      params: callInfo.p,
-      headers: {
-        "x-internal-secret": process.env.INTERNAL_SECRET_KEY,
-        "Content-Type": "application/json"
-      }
+    const rawParams = await invokePrompt(process.env.BEDROCK_API_ARN, { 
+      user_input: state.userQuery,
+      case_id: state.caseId,
+      api_docs: apiSpec,
+      context: accumulatedContext 
     });
 
-    console.log(`   └─ 🟢 [성공] ${callInfo.r} 데이터 획득`);
 
-    let filteredData = res.data;
-    if (callInfo.r === 'cases' || callInfo.r === 'case') {
-      const { memo, content, ...rest } = res.data;
-      filteredData = { ...rest, past_memo_summary: memo?.substring(0, 20) + "..." };
+    try {
+      const jsonStart = rawParams.indexOf('{');
+      const jsonEnd = rawParams.lastIndexOf('}');
+      
+      if (jsonStart === -1 || jsonEnd === -1) {
+        console.log(`   └─ ⏹️ JSON 형식을 찾을 수 없어 루프를 종료합니다.`);
+        break;
+      }
+
+      const cleanJson = rawParams.substring(jsonStart, jsonEnd + 1);
+      const callInfo = JSON.parse(cleanJson);
+
+      if (callInfo.action === "finish") {
+        // 상품 정보를 물었는데 아직 product_id가 없다면 더 돌도록 유도
+        if (state.userQuery.includes("상품") && !accumulatedContext.includes("product_id")) {
+          accumulatedContext += "\n[시스템 알림]: 아직 상품 상세 정보(product_id)를 찾지 못했습니다. 추가 조회가 필요합니다.";
+          iterations++;
+          continue;
+        }
+        console.log(`   └─ ✅ 모든 정보 확보 완료.`);
+        break;
+      }
+
+      // ID 값에서 중괄호 {} 제거
+      const targetId = String(callInfo.i || state.caseId).replace(/\{|\}/g, "");
+      let targetUrl = `${process.env.ROOT_URL}/${callInfo.r}`;
+      
+      // 경로 중복 방지
+      if (targetId !== "null" && !callInfo.r.includes(targetId)) {
+        targetUrl += `/${targetId}`;
+      }
+
+      console.log(`   📡 [API 호출]: ${callInfo.m || 'GET'} ${targetUrl}`);
+
+      const res = await axios({
+        method: callInfo.m || 'GET',
+        url: targetUrl,
+        params: callInfo.p,
+        headers: {
+          "x-internal-secret": process.env.INTERNAL_SECRET_KEY,
+          "Content-Type": "application/json"
+        }
+      });
+
+      console.log(`   └─ 🟢 [성공] ${callInfo.r} 데이터 획득`);
+      
+      // cases 조회 시 memo와 content가 AI를 방해하지 않도록 처리
+      let filteredData = res.data;
+      if (callInfo.r === 'cases' || callInfo.r === 'case') {
+        const { memo, content, ...rest } = res.data;
+        filteredData = { 
+          ...rest, 
+          _note: "아래의 memo/content는 과거 상담 요약일 뿐, 현재 상품 정보가 아닙니다. 무시하고 order_id를 추출하세요.",
+          past_memo_summary: memo?.substring(0, 20) + "..." // 아주 짧게 요약만 남김
+        };
+      }
+
+      const stepResult = `\n[${iterations + 1}회차 결과 - ${callInfo.r}]: ${JSON.stringify(filteredData)}`;
+      accumulatedContext = accumulatedContext === "아직 호출된 API 없음" ? stepResult : accumulatedContext + stepResult;
+      iterations++;
+
+    } catch (e) {
+      console.error(`   └─ ❌ [파싱/호출 에러]:`, e.message);
+      // 에러 발생 시 AI에게 상황을 알려주고 다시 시도하게 함
+      accumulatedContext += `\n[에러]: ${e.message}. 올바른 JSON 형식과 경로로 다시 시도하세요.`;
+      iterations++;
     }
-
-    const stepResult = `\n[${state.apiIterations + 1}회차 결과 - ${callInfo.r}]: ${JSON.stringify(filteredData).substring(0, 3000)}`;
-    const updatedContext = (state.sourceData === "아직 호출된 API 없음" || !state.sourceData) 
-      ? stepResult 
-      : state.sourceData + stepResult;
-
-    return { 
-      sourceData: updatedContext, 
-      apiIterations: state.apiIterations + 1 
-    };
-
-  } catch (e) {
-    // 에러 메시지를 sourceData에 남겨서 다음 planner가 알 수 있게 함
-    console.error(`   └─ ❌ [에러]:`, e.message);
-    return { 
-      sourceData: (state.sourceData || "") + `\n[에러 알림]: ${e.message}`, 
-      apiIterations: state.apiIterations + 1 
-    };
   }
+
+  return { 
+    sourceData: accumulatedContext, 
+    retrievedContext: apiSpec,
+    retryCount: (state.retryCount || 0) + 1
+  };
 };
 
 // 노드 5: RAG Agent
@@ -308,13 +300,13 @@ const composerNode = async (state) => {
     history: state.historySummary
   });
 
-  // [답변]과 [추천질문] 섹션을 정규표현식으로 분리
+  // [답변]과 [추천질문] 섹션을 정규표현식으로 분리합니다.
   const answerMatch = res.match(/\[답변\]\s*([\s\S]+?)(?=\[추천질문\]|$)/);
   const suggestionsMatch = res.match(/\[추천질문\]\s*([\s\S]+)/);
 
   const finalAnswer = answerMatch ? answerMatch[1].trim() : res.trim();
   
-  // 추천 질문을 배열 형태로 변환
+  // 추천 질문을 배열 형태로 변환 (숫자나 불렛 기호 제거)
   const suggestions = suggestionsMatch 
     ? suggestionsMatch[1]
         .split('\n')
@@ -333,8 +325,7 @@ const workflow = new StateGraph(graphState)
   .addNode("guardrail", guardrailNode)
   .addNode("memory", memoryLoaderNode)
   .addNode("supervisor", supervisorNode)
-  .addNode("api_planner", apiPlannerNode)
-  .addNode("api_executor", apiExecutorNode)
+  .addNode("api", apiNode)
   .addNode("rag", ragNode)
   .addNode("ft", ftNode)
   .addNode("verifier", verifierNode)
@@ -345,27 +336,12 @@ workflow.addEdge("guardrail", "memory");
 workflow.addEdge("memory", "supervisor");
 
 workflow.addConditionalEdges("supervisor", (state) => state.intent, {
-  api: "api_planner",
+  api: "api",
   rag: "rag",
   ft: "ft"
 });
 
-workflow.addConditionalEdges("api_planner", (state) => {
-  const raw = state.reason || "";
-  const iterations = state.apiIterations || 0;
-  
-  // finish 액션이거나 4번 시도했을 때 verifier로 이동
-  if (raw.includes('"action":"finish"') || iterations >= 4) {
-    return "verifier";
-  }
-  return "executor";
-}, {
-  verifier: "verifier",
-  executor: "api_executor"
-});
-
-
-workflow.addEdge("api_executor", "api_planner");
+workflow.addEdge("api", "verifier");
 workflow.addEdge("rag", "verifier");
 workflow.addEdge("ft", "verifier");
 
@@ -376,7 +352,7 @@ workflow.addConditionalEdges("verifier", (state) => {
 
   // 시도 횟수가 2회 미만일 때만 유턴 허용
   if (count < 2) {
-    if (status === "RETRY_API" && currentIntent !== "api") return "api_planner";
+    if (status === "RETRY_API" && currentIntent !== "api") return "api";
     if (status === "RETRY_RAG" && currentIntent !== "rag") return "rag";
     if (status === "RETRY_FT" && currentIntent !== "ft") return "ft";
   }
@@ -384,7 +360,7 @@ workflow.addConditionalEdges("verifier", (state) => {
   console.log(`   🏁 [최종 종료]: 더 이상의 유턴 없이 답변을 작성합니다.`);
   return "composer"; 
 }, {
-  api: "api_planner",
+  api: "api",
   rag: "rag",
   ft: "ft",
   composer: "composer"
