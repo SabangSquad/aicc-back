@@ -4,7 +4,7 @@
 //  - POST /chat/{case_id} : 해당 case_id의 전체 메시지 로그 분석 (감정, 요약, 추천 답변)
 
 import express from "express";
-import { runAiccPrompt, analyzeCaseConversation } from "../bedrock.js";
+import { processAICC, analyzeCaseConversation } from "../bedrock.js";
 import pool from "../db.js";
 
 const router = express.Router();
@@ -32,7 +32,11 @@ const router = express.Router();
  *              message:
  *                type: string
  *                description: "고객 발화(텍스트)"
- *                example: "자기소개해봐"
+ *                example: "환불 규정은 어떻게 돼?"
+ *              caseId:
+ *                type: string
+ *                description: "기존 상담 ID (최초 문의시 생략)"
+ *                example: 1
  *    responses:
  *      200:
  *        description: "정상적으로 Bedrock에서 응답을 생성한 경우"
@@ -47,20 +51,20 @@ const router = express.Router();
  *                answer:
  *                  type: string
  *                  description: "실제 고객에게 전달할 상담 답변([응답] 부분)"
- *                  example: "안녕하세요, 저는 AICC 테스트용 상담 챗봇입니다. 궁금하신 점을 도와드릴게요."
+ *                  example: "환불은 7일 이내입니다."
  *                reason:
  *                  type: string
  *                  nullable: true
  *                  description: "응답에 대한 규정/판단 근거([근거] 부분)"
- *                  example: "테스트 단계에서 자기소개 요청 시 챗봇 역할을 설명 (규정 1-1)"
+ *                  example: "환불은 7일 이내입니다. (규정 1-1)"
  *                _links:
  *                  type: array
  *                  items:
  *                    type: object
  *            example:
  *              ok: true
- *              answer: "안녕하세요, 저는 AICC 테스트용 상담 챗봇입니다. 궁금하신 점을 도와드릴게요."
- *              reason: "테스트 단계에서 자기소개 요청 시 챗봇 역할을 설명 (규정 1-1)"
+ *              answer: "환불은 7일 이내입니다."
+ *              reason: "환불은 7일 이내입니다."
  *              _links:
  *                - rel: "self"
  *                  href: "/chat"
@@ -97,8 +101,9 @@ const router = express.Router();
  */
 
 router.post("/", async (req, res) => {
+  let client = null;
   try {
-    const { message } = req.body ?? {};
+    const { message, caseId: inputCaseId } = req.body ?? {};
 
     if (!message || typeof message !== "string") {
       return res.status(400).json({
@@ -107,21 +112,58 @@ router.post("/", async (req, res) => {
       });
     }
 
-    // Bedrock Prompt Management 프롬프트 호출
-    const result = await runAiccPrompt(message);
+    client = await pool.connect();
+    let caseId = inputCaseId;
 
-    // 디버깅용: 실제 LLM 출력 전체
-    console.log("[Bedrock rawText]", result.rawText);
+    await client.query('BEGIN');
+
+    // 세션 관리: caseId가 없으면 새로 생성
+    if (!caseId) {
+      const caseRes = await client.query(
+        "INSERT INTO cases (status, created_at) VALUES ('상담', NOW()) RETURNING case_id"
+      );
+      caseId = caseRes.rows[0].case_id;
+    }
+
+    // 고객 메시지 저장
+    await client.query(
+      "INSERT INTO messages (case_id, content, speaker, occurred_at) VALUES ($1, $2, 'customer', NOW())",
+      [caseId, message]
+    );
+
+    await client.query('COMMIT');
+    client.release();
+    client = null;
+    
+    // Bedrock Prompt Management 프롬프트 호출
+    const result = await processAICC(message, caseId);
+
+    // AI 답변 저장
+    await pool.query(
+      "INSERT INTO messages (case_id, content, speaker, occurred_at) VALUES ($1, $2, 'agent', NOW())",
+      [caseId, result.answer]
+    );
 
     return res.json({
       ok: true,
       answer: result.answer,
       reason: result.reason,
+      caseId: caseId,
       _links: [
         { rel: "self", href: "/chat", method: "POST" }
       ]
     });
   } catch (err) {
+    if (client) {
+    try {
+      // 이미 에러로 인해 연결이 끊겼을 수 있으므로 한 번 더 체크
+      await client.query('ROLLBACK');
+    } catch (rollbackErr) {
+      console.error("Rollback failed:", rollbackErr);
+    } finally {
+      client.release(); // 에러와 상관없이 반납은 반드시 수행
+    }
+  }
     console.error("Bedrock 호출 오류:", err);
 
     return res.status(500).json({
@@ -249,8 +291,6 @@ router.post("/:case_id", async (req, res) => {
   }
 
   try {
-    // messages 테이블 스키마:
-    // message_id, case_id, occurred_at, content, speaker
     const { rows } = await pool.query(
       `
       SELECT speaker, content, occurred_at

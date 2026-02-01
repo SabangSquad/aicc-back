@@ -1,168 +1,416 @@
-const region = process.env.AWS_REGION ?? "ap-northeast-2";
-const promptArn = process.env.BEDROCK_PROMPT_ARN;          // 응답용 프롬프트 ARN
+import 'dotenv/config';
+import { StateGraph, END, START } from "@langchain/langgraph";
+import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
+import * as BedrockRuntime from "@aws-sdk/client-bedrock-runtime";
+import * as BedrockAgent from "@aws-sdk/client-bedrock-agent-runtime";
+import pool from "./db.js";
+import axios from 'axios';
+
+const runtimeModule = BedrockRuntime.default || BedrockRuntime;
+const agentModule = BedrockAgent.default || BedrockAgent;
+const { BedrockRuntimeClient, ApplyGuardrailCommand } = runtimeModule;
+const { BedrockAgentRuntimeClient, RetrieveCommand } = agentModule;
+
+const region = process.env.AWS_REGION || "ap-northeast-2";
 const apiKey = process.env.BEDROCK_API_KEY;
-const casePromptArn = process.env.BEDROCK_CASE_PROMPT_ARN; // 케이스 감정/요약용 프롬프트 ARN
 
-// 공용 헤더
-function bedrockHeaders() {
-  if (!apiKey) {
-    throw new Error("AWS_BEARER_TOKEN_BEDROCK 환경변수가 없습니다.");
+// AWS SDK 클라이언트 초기화
+const credentials = {
+  accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+  secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
+};
+const bedrockRuntime = new BedrockRuntimeClient({ region, credentials });
+const bedrockAgentRuntime = new BedrockAgentRuntimeClient({ region, credentials });
+
+// PostgreSQL 체크포인터
+const checkpointer = new PostgresSaver(pool);
+
+
+// Bedrock 프롬프트 관리 호출 (Fetch 기반)
+async function invokePrompt(arn, inputs) {
+  if (!arn) throw new Error(`ARN이 설정되지 않았습니다.`);
+  if (!apiKey) throw new Error("BEDROCK_API_KEY(ABSK)가 없습니다.");
+
+  const url = `https://bedrock-runtime.${region}.amazonaws.com/model/${encodeURIComponent(arn)}/converse`;
+
+  const promptVariables = {};
+  for (const [key, value] of Object.entries(inputs)) {
+    promptVariables[key] = { text: String(value || "정보 없음") };
   }
-  return {
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${apiKey}`,
-  };
-}
 
-/**
- * 1) 실시간 챗봇 응답용
- * Prompt Management 프롬프트에 {{user_utterance}} 변수를 꽂아서 호출.
- *
- * @param {string} userMessage
- * @returns {Promise<{ rawText: string, answer: string, reason: string | null }>}
- */
-export async function runAiccPrompt(userMessage) {
-  if (!promptArn) {
-    throw new Error("BEDROCK_PROMPT_ARN 환경변수가 없습니다.");
-  }
-
-  const url = `https://bedrock-runtime.${region}.amazonaws.com/model/${encodeURIComponent(
-    promptArn
-  )}/converse`;
-
-  // Prompt Management + Converse: promptVariables 값은 { text: "..." } 형태여야 함
-  const body = {
-    promptVariables: {
-      user_utterance: {
-        text: String(userMessage),
-      },
-    },
-  };
+  console.log(`📡 [Fetch] 프롬프트 호출 중: ${arn.split('/').pop()}`);
 
   const res = await fetch(url, {
     method: "POST",
-    headers: bedrockHeaders(),
-    body: JSON.stringify(body),
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({ 
+      promptVariables
+    }),
   });
 
   if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(
-      `Bedrock HTTP ${res.status} ${res.statusText} - ${
-        text || "no body"
-      }`
-    );
+    const errorBody = await res.text();
+    throw new Error(`Bedrock HTTP ${res.status}: ${errorBody}`);
   }
 
   const data = await res.json();
-
-  // 텍스트 추출
-  let rawText = "";
-
-  const contentBlocks = data?.output?.message?.content;
-  if (Array.isArray(contentBlocks)) {
-    const textBlock = contentBlocks.find(
-      (block) => typeof block?.text === "string" && block.text.trim()
-    );
-    if (textBlock) {
-      rawText = textBlock.text;
-    }
-  }
-
-  if (!rawText) {
-    rawText = JSON.stringify(data);
-  }
-
-  // 응답, 근거 파싱
-  const answerMatch = rawText.match(/\[응답\]\s*([^\[]+)/s);
-  const reasonMatch = rawText.match(/\[근거\]\s*([\s\S]+)/);
-
-  const answer = answerMatch ? answerMatch[1].trim() : rawText.trim();
-  const reason = reasonMatch ? reasonMatch[1].trim() : null;
-
-  return {
-    rawText,
-    answer,
-    reason,
-  };
+  return data.output.message.content.find(c => c.text)?.text || "";
 }
 
-/**
- * 2) 케이스 전체 대화 분석용 (Prompt Management 사용)
- * - 대화 로그 전체(conversationText)를 입력으로 넘김
- * - 프롬프트 관리에서 정의한 {{conversation_text}} 변수에 꽂아서 호출
- *
- * @param {string} conversationText - "고객: ...\n상담사: ..." 형태의 전체 로그
- * @returns {Promise<{ rawText: string, json: any | null }>}
- */
-export async function analyzeCaseConversation(conversationText) {
-  if (!casePromptArn) {
-    throw new Error("BEDROCK_CASE_PROMPT_ARN 환경변수가 없습니다.");
+// 특정 지식 기반 검색
+
+async function retrieveKB(query, kbId) {
+  if (!kbId) return "지식 베이스 ID가 설정되지 않았습니다.";
+  const command = new RetrieveCommand({
+    knowledgeBaseId: kbId,
+    retrievalQuery: { text: query },
+    retrievalConfiguration: {
+      vectorSearchConfiguration: { numberOfResults: 2 }
+    }
+  });
+  const response = await bedrockAgentRuntime.send(command);
+  return response.retrievalResults.map(res => res.content.text).join('\n\n');
+}
+
+// 그래프 상태 정의
+const graphState = {
+  channels: {
+    userQuery: null,
+    caseId: null,
+    historySummary: null,
+    intent: null,
+    sourceData: null,
+    retrievedContext: null,
+    verificationStatus: null,
+    finalAnswer: null,
+    reason: null,
+    retryCount: null,
   }
+};
 
-  const url = `https://bedrock-runtime.${region}.amazonaws.com/model/${encodeURIComponent(
-    casePromptArn
-  )}/converse`;
-
-  const body = {
-    promptVariables: {
-      conversation_text: {
-        text: String(conversationText),
-      },
-    },
-  };
+// 그래프 노드 정의
+const guardrailNode = async (state) => {
+  // 노드 1: 가드레일
+  console.log(`\n🔍 [Node 1: Guardrail] 검사 시작...`);
+  const guardrailId = process.env.BEDROCK_GUARDRAIL_ARN.split('/').pop();
+  const url = `https://bedrock-runtime.${region}.amazonaws.com/guardrail/${guardrailId}/version/DRAFT/apply`;
 
   const res = await fetch(url, {
     method: "POST",
-    headers: bedrockHeaders(),
-    body: JSON.stringify(body),
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      source: "INPUT",
+      content: [{ text: { text: state.userQuery } }]
+    }),
   });
 
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(
-      `Bedrock HTTP ${res.status} ${res.statusText} - ${
-        text || "no body"
-      }`
-    );
-  }
-
   const data = await res.json();
+  if (data.action === "GUARDRAIL_INTERVENED") {
+    console.error(`🚨 [Node 1: Guardrail] 부적절한 요청 차단됨`);
+    throw new Error("GUARDRAIL_BLOCKED");
+  }
+  return { ...state };
+};
 
-  // 텍스트 추출
-  let rawText = "";
-  const contentBlocks = data?.output?.message?.content;
-  if (Array.isArray(contentBlocks)) {
-    const textBlock = contentBlocks.find(
-      (block) => typeof block?.text === "string" && block.text.trim()
-    );
-    if (textBlock) {
-      rawText = textBlock.text;
+// 노드 2: Memory Loader
+const memoryLoaderNode = async (state) => {
+  console.log(`📂 [Node 2: Memory Loader] 로드 중...`);
+  const { rows } = await pool.query(
+    "SELECT speaker, content FROM messages WHERE case_id = $1 ORDER BY occurred_at DESC LIMIT 5",
+    [state.caseId]
+  );
+  const historyText = rows.reverse().map(r => `${r.speaker}: ${r.content}`).join("\n");
+
+  const summary = await invokePrompt(process.env.BEDROCK_MEMORY_LOADER_ARN, { 
+    past_logs: historyText || "이전 맥락 없음",
+    user_input: state.userQuery 
+  });
+  return { historySummary: summary };
+};
+
+// 노드 3: Supervisor
+const supervisorNode = async (state) => {
+  console.log(`🎯 [Node 3: Supervisor] 분류 중...`);
+  const raw = await invokePrompt(process.env.BEDROCK_SUPERVISOR_ARN, { 
+    user_input: state.userQuery, 
+    context: state.historySummary 
+  });
+  const jsonMatch = raw.match(/\{[\s\S]*\}/);
+  let intent = "rag";
+  if (jsonMatch) {
+    try { intent = JSON.parse(jsonMatch[0]).decision || "rag"; } catch (e) { console.error("JSON 파싱 실패"); }
+  }
+  console.log(`   └─ ✅ 최종 결정: [${intent.toUpperCase()}]`);
+  return { intent };
+};
+
+// 노드 4: API Agent
+const apiNode = async (state) => {
+  console.log(`\n🚀 [Node 4: API Agent] 연쇄 호출 시작...`);
+  
+  const apiSpec = await retrieveKB(state.userQuery, process.env.BEDROCK_API_KNOWLEDGE_BASE_ID);
+  
+  let accumulatedContext = "아직 호출된 API 없음";
+  let iterations = 0;
+  const maxIterations = 4;
+
+  while (iterations < maxIterations) {
+    console.log(`   --- [회차 ${iterations + 1} / ${maxIterations}] ---`);
+    
+    const rawParams = await invokePrompt(process.env.BEDROCK_API_ARN, { 
+      user_input: state.userQuery,
+      case_id: state.caseId,
+      api_docs: apiSpec,
+      context: accumulatedContext 
+    });
+
+
+    try {
+      const jsonStart = rawParams.indexOf('{');
+      const jsonEnd = rawParams.lastIndexOf('}');
+      
+      if (jsonStart === -1 || jsonEnd === -1) {
+        console.log(`   └─ ⏹️ JSON 형식을 찾을 수 없어 루프를 종료합니다.`);
+        break;
+      }
+
+      const cleanJson = rawParams.substring(jsonStart, jsonEnd + 1);
+      const callInfo = JSON.parse(cleanJson);
+
+      if (callInfo.action === "finish") {
+        // 상품 정보를 물었는데 아직 product_id가 없다면 더 돌도록 유도
+        if (state.userQuery.includes("상품") && !accumulatedContext.includes("product_id")) {
+          accumulatedContext += "\n[시스템 알림]: 아직 상품 상세 정보(product_id)를 찾지 못했습니다. 추가 조회가 필요합니다.";
+          iterations++;
+          continue;
+        }
+        console.log(`   └─ ✅ 모든 정보 확보 완료.`);
+        break;
+      }
+
+      // ID 값에서 중괄호 {} 제거
+      const targetId = String(callInfo.i || state.caseId).replace(/\{|\}/g, "");
+      let targetUrl = `${process.env.ROOT_URL}/${callInfo.r}`;
+      
+      // 경로 중복 방지
+      if (targetId !== "null" && !callInfo.r.includes(targetId)) {
+        targetUrl += `/${targetId}`;
+      }
+
+      console.log(`   📡 [API 호출]: ${callInfo.m || 'GET'} ${targetUrl}`);
+
+      const res = await axios({
+        method: callInfo.m || 'GET',
+        url: targetUrl,
+        params: callInfo.p,
+        headers: {
+          "x-internal-secret": process.env.INTERNAL_SECRET_KEY,
+          "Content-Type": "application/json"
+        }
+      });
+
+      console.log(`   └─ 🟢 [성공] ${callInfo.r} 데이터 획득`);
+      
+      // cases 조회 시 memo와 content가 AI를 방해하지 않도록 처리
+      let filteredData = res.data;
+      if (callInfo.r === 'cases' || callInfo.r === 'case') {
+        const { memo, content, ...rest } = res.data;
+        filteredData = { 
+          ...rest, 
+          _note: "아래의 memo/content는 과거 상담 요약일 뿐, 현재 상품 정보가 아닙니다. 무시하고 order_id를 추출하세요.",
+          past_memo_summary: memo?.substring(0, 20) + "..." // 아주 짧게 요약만 남김
+        };
+      }
+
+      const stepResult = `\n[${iterations + 1}회차 결과 - ${callInfo.r}]: ${JSON.stringify(filteredData)}`;
+      accumulatedContext = accumulatedContext === "아직 호출된 API 없음" ? stepResult : accumulatedContext + stepResult;
+      iterations++;
+
+    } catch (e) {
+      console.error(`   └─ ❌ [파싱/호출 에러]:`, e.message);
+      // 에러 발생 시 AI에게 상황을 알려주고 다시 시도하게 함
+      accumulatedContext += `\n[에러]: ${e.message}. 올바른 JSON 형식과 경로로 다시 시도하세요.`;
+      iterations++;
     }
   }
-  if (!rawText) {
-    rawText = JSON.stringify(data);
+
+  return { 
+    sourceData: accumulatedContext, 
+    retrievedContext: apiSpec,
+    retryCount: (state.retryCount || 0) + 1
+  };
+};
+
+// 노드 5: RAG Agent
+const ragNode = async (state) => {
+  console.log(`📚 [Node 5: RAG Agent] 지식 검색 중...`);
+  const docs = await retrieveKB(state.userQuery, process.env.BEDROCK_POLICY_KNOWLEDGE_BASE_ID);
+  const res = await invokePrompt(process.env.BEDROCK_RAG_ARN, { 
+    user_query: state.userQuery,
+    retrieved_context: docs 
+  });
+  return { 
+    sourceData: res, 
+    retrievedContext: docs,
+    retryCount: (state.retryCount || 0) + 1
+  };
+};
+
+// 노드 6: FT Agent
+const ftNode = async (state) => {
+  console.log(`🎭 [Node 6: FT Agent] 감정 케어 중...`);
+  const res = await invokePrompt(process.env.BEDROCK_FINE_TUNING_ARN, { 
+    memory_context: state.historySummary,
+    rag_data: state.intent === 'rag' ? state.sourceData : "해당 없음",
+    api_data: state.intent === 'api' ? state.sourceData : "해당 없음",
+    user_input: state.userQuery 
+  });
+  return { 
+    sourceData: res,
+    retryCount: (state.retryCount || 0) + 1
+  };
+};
+
+// 노드 7: Verifier
+const verifierNode = async (state) => {
+  console.log(`⚖️ [Node 7: Verifier] 교차 검증 및 경로 최적화 중...`);
+  const res = await invokePrompt(process.env.BEDROCK_VERIFIER_ARN, { 
+    current_intent: state.intent,
+    retrieved_data: state.sourceData, // RAG 답변 혹은 API 로우 데이터
+    user_input: state.userQuery,
+    history: state.historySummary
+  });
+
+  const status = res.match(/"status":\s*"([^"]+)"/)?.[1] || "P";
+  console.log(`   🔍 [검증 결과]: ${status} (현재 시도 횟수: ${state.retryCount || 0}/1)`);
+  return { verificationStatus: status };
+};
+
+// 노드 8: Composer
+const composerNode = async (state) => {
+  console.log(`✍️ [Node 8/9: Composer] 답변 및 추천 질문 구성 중...`);
+  
+  const res = await invokePrompt(process.env.BEDROCK_COMPOSER_ARN, {
+    user_input: state.userQuery,
+    verification_status: state.verificationStatus,
+    source_data: state.sourceData,
+    history: state.historySummary
+  });
+
+  // [답변]과 [추천질문] 섹션을 정규표현식으로 분리합니다.
+  const answerMatch = res.match(/\[답변\]\s*([\s\S]+?)(?=\[추천질문\]|$)/);
+  const suggestionsMatch = res.match(/\[추천질문\]\s*([\s\S]+)/);
+
+  const finalAnswer = answerMatch ? answerMatch[1].trim() : res.trim();
+  
+  // 추천 질문을 배열 형태로 변환 (숫자나 불렛 기호 제거)
+  const suggestions = suggestionsMatch 
+    ? suggestionsMatch[1]
+        .split('\n')
+        .map(s => s.replace(/^\d+\.\s*|^\-\s*/, '').trim())
+        .filter(s => s && s.length > 0)
+    : ["다른 궁금한 점이 있으신가요?"];
+
+  return { 
+    finalAnswer, 
+    suggestedQuestions: suggestions.slice(0, 3) // 상위 3개만 제안
+  };
+};
+
+// 그래프 구축
+const workflow = new StateGraph(graphState)
+  .addNode("guardrail", guardrailNode)
+  .addNode("memory", memoryLoaderNode)
+  .addNode("supervisor", supervisorNode)
+  .addNode("api", apiNode)
+  .addNode("rag", ragNode)
+  .addNode("ft", ftNode)
+  .addNode("verifier", verifierNode)
+  .addNode("composer", composerNode);
+
+workflow.addEdge(START, "guardrail");
+workflow.addEdge("guardrail", "memory");
+workflow.addEdge("memory", "supervisor");
+
+workflow.addConditionalEdges("supervisor", (state) => state.intent, {
+  api: "api",
+  rag: "rag",
+  ft: "ft"
+});
+
+workflow.addEdge("api", "verifier");
+workflow.addEdge("rag", "verifier");
+workflow.addEdge("ft", "verifier");
+
+workflow.addConditionalEdges("verifier", (state) => {
+  const status = state.verificationStatus;
+  const count = state.retryCount || 0;
+  const currentIntent = state.intent; // 현재 어디를 갔다 왔는지 확인
+
+  // 시도 횟수가 2회 미만일 때만 유턴 허용
+  if (count < 2) {
+    if (status === "RETRY_API" && currentIntent !== "api") return "api";
+    if (status === "RETRY_RAG" && currentIntent !== "rag") return "rag";
+    if (status === "RETRY_FT" && currentIntent !== "ft") return "ft";
   }
 
-  // json ... 같은 코드블록 제거
-  let cleaned = rawText.trim();
-  if (cleaned.startsWith("```")) {
-    cleaned = cleaned.replace(/^```[a-zA-Z]*\n?/, "");
-    if (cleaned.endsWith("```")) {
-      cleaned = cleaned.slice(0, -3);
-    }
-    cleaned = cleaned.trim();
-  }
+  console.log(`   🏁 [최종 종료]: 더 이상의 유턴 없이 답변을 작성합니다.`);
+  return "composer"; 
+}, {
+  api: "api",
+  rag: "rag",
+  ft: "ft",
+  composer: "composer"
+});
 
-  let json = null;
+workflow.addEdge("composer", END);
+
+const app = workflow.compile({ checkpointer });
+
+// AICC 메인 프로세스
+export async function processAICC(userQuery, caseId) {
   try {
-    json = JSON.parse(cleaned);
-  } catch {
-  }
+    const config = { configurable: { thread_id: String(caseId) } };
+    const finalState = await app.invoke({ userQuery, caseId, retryCount: 0 }, config);
+    const response = {
+      ok: true,
+      answer: finalState.finalAnswer, // 메인 답변
+      suggestions: finalState.suggestedQuestions || [], // AI가 제안하는 다음 질문들
+      caseId: String(caseId),
+      reason: finalState.verificationStatus === "P" ? "검증 완료" : "데이터 확인 필요"
+    };
 
-  return {
-    rawText,
-    json,
-  };
+    // 서버 로그 확인용
+    console.log(`\n🎁 [Final Response] 질문 유도형 응답 생성:`);
+    console.log(`   📝 답변 요약: ${response.answer.substring(0, 40)}...`);
+    console.log(`   💡 추천 질문:`, response.suggestions);
+
+    return response;
+  } catch (err) {
+    if (err.message === "GUARDRAIL_BLOCKED") return { answer: "죄송합니다. 입력하신 내용 중에 보안 정책상 제한된 표현이나 개인정보가 포함되어 있어 답변을 드릴 수 없습니다.", reason: "보안 차단" };
+    console.error("AICC Error:", err);
+    throw err;
+  }
 }
 
+// 상담 분석
+export async function analyzeCaseConversation(conversationText) {
+  const res = await invokePrompt(process.env.BEDROCK_CASE_WRITER_ARN, { 
+    conversation_text: conversationText 
+  });
+  try {
+    const json = JSON.parse(res.match(/\{[\s\S]*\}/)?.[0] || 'null');
+    return { rawText: res, json };
+  } catch (e) { return { rawText: res, json: null }; }
+}
+
+// 체크포인터 초기화
+export async function initializeCheckpointer() {
+  try {
+    await checkpointer.setup();
+    console.log("✅ [Checkpointer] 준비 완료");
+  } catch (err) { console.error("❌ 초기화 실패:", err); }
+}

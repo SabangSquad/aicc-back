@@ -330,7 +330,7 @@ router.delete('/:order_id', async (req, res) => {
  *                 - order_item_id: 1
  *                   product_id: 1
  *                   quantity: 3
- *                   total_price: 25000
+ *                   price: 25000
  *               _links:
  *                 - rel: "self"
  *                   href: "/orders/1/order-items"
@@ -387,7 +387,7 @@ router.delete('/:order_id', async (req, res) => {
  *                 quantity:
  *                   type: integer
  *                   description: 주문 수량
- *                 total_price:
+ *                 price:
  *                   type: integer
  *                   description: 총합 가격
  *                 _links:
@@ -396,7 +396,7 @@ router.delete('/:order_id', async (req, res) => {
  *               order_item_id: 1
  *               product_id: 1
  *               quantity: 3
- *               total_price: 50000
+ *               price: 50000
  *               _links:
  *                 - rel: "self"
  *                   href: "/orders/1/order-items"
@@ -422,7 +422,7 @@ router.get('/:order_id/order-items', async (req, res) => {
     }
 
     const sql = `
-      SELECT order_item_id, product_id, quantity, total_price
+      SELECT order_item_id, product_id, quantity, price
       FROM order_items
       WHERE order_id = $1
     `;
@@ -439,6 +439,7 @@ router.get('/:order_id/order-items', async (req, res) => {
       ]
     });
   } catch (err) {
+    console.error('주문 상품 조회 상세 오류:', err); // 이 줄을 추가해서 터미널 로그를 확인하세요!
     return res.status(500).json({ error: '서버 오류가 발생했습니다.' });
   }
 });
@@ -463,7 +464,7 @@ router.post('/:order_id/order-items', async (req, res) => {
     const { rows } = await pool.query(
       `INSERT INTO order_items (order_id, product_id, quantity)
        VALUES ($1, $2, $3)
-       RETURNING order_item_id, product_id, quantity, total_price`,
+       RETURNING order_item_id, product_id, quantity, price`,
       [orderId, product_id, quantity]
     );
 

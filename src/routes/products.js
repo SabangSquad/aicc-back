@@ -78,6 +78,7 @@ router.get('/', async (_, res) => {
   }
 });
 
+
 /**
  * @swagger
  * /products:
@@ -293,6 +294,156 @@ router.route('/:product_id')
         ...result.rows[0],
         _links: [
           { rel: 'self', href: `/products/${productId}`, method: 'PATCH' },
+          { rel: 'list', href: '/products', method: 'GET' }
+        ]
+      });
+    } catch (err) {
+      console.error('상품 수정 오류:', err);
+      return res.status(500).json({ error: '서버 오류가 발생했습니다.' });
+    }
+  });
+
+/**
+ * @swagger
+ * /products/{product_id}:
+ *   get:
+ *     summary: "상품 상세 조회"
+ *     description: "특정 상품의 정보를 상세 조회합니다."
+ *     tags: [Products]
+ *     parameters:
+ *       - in: path
+ *         name: product_id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: "상품 ID"
+ *     responses:
+ *       200:
+ *         description: "상품 정보 조회 성공"
+ *         content:
+ *           application/json:
+ *             example:
+ *               product_id: 1
+ *               name: "선풍기"
+ *               price: 15000
+ *               _links:
+ *                 - rel: "self"
+ *                   href: "/products/1"
+ *                   method: "GET"
+ *       404:
+ *         description: "상품을 찾을 수 없음"
+ *       500:
+ *         description: "서버 오류"
+ *   patch:
+ *     summary: "상품 수정"
+ *     description: "해당 상품의 이름이나 가격을 수정합니다."
+ *     tags: [Products]
+ *     parameters:
+ *       - in: path
+ *         name: product_id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: "상품 ID"
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               name: { type: string }
+ *               price: { type: integer }
+ *     responses:
+ *       200:
+ *         description: "수정된 상품 정보"
+ *       404:
+ *         description: "상품 없음"
+ *       500:
+ *         description: "서버 오류"
+ */
+router.route('/:product_id')
+  // 상품 상세 조회
+  .get(async (req, res) => {
+    try {
+      const productId = Number.parseInt(req.params.product_id, 10);
+      if (Number.isNaN(productId)) {
+        return res.status(400).json({ error: '유효하지 않은 상품 ID입니다.' });
+      }
+
+      const sql = `
+        SELECT product_id, name, price
+        FROM products
+        WHERE product_id = $1
+      `;
+      const { rows } = await pool.query(sql, [productId]);
+
+      if (rows.length === 0) {
+        return res.status(404).json({ error: '상품을 찾을 수 없습니다.' });
+      }
+
+      return res.status(200).json({
+        ...rows[0],
+        _links: [
+          { rel: 'self', href: `/products/${productId}`, method: 'GET' },
+          { rel: 'update', href: `/products/${productId}`, method: 'PATCH' },
+          { rel: 'list', href: '/products', method: 'GET' }
+        ]
+      });
+    } catch (err) {
+      console.error('상품 조회 오류:', err);
+      return res.status(500).json({ error: '서버 오류가 발생했습니다.' });
+    }
+  })
+  // 상품 수정
+  .patch(async (req, res) => {
+    try {
+      const productId = Number.parseInt(req.params.product_id, 10);
+      if (Number.isNaN(productId)) {
+        return res.status(400).json({ error: '유효하지 않은 상품 ID입니다.' });
+      }
+
+      let { name, price } = req.body ?? {};
+      const updates = [];
+      const values = [];
+      let paramIndex = 1;
+
+      if (name !== undefined) {
+        updates.push(`name = $${paramIndex++}`);
+        values.push(String(name).trim());
+      }
+      if (price !== undefined) {
+        const p = Number(price);
+        if (!Number.isInteger(p)) {
+          return res.status(400).json({ error: 'price는 정수여야 합니다.' });
+        }
+        updates.push(`price = $${paramIndex++}`);
+        values.push(p);
+      }
+
+      if (updates.length === 0) {
+        return res.status(400).json({ error: '수정할 내용을 입력해주세요.' });
+      }
+
+      values.push(productId);
+      const updateQuery = `
+        UPDATE products
+        SET ${updates.join(', ')}
+        WHERE product_id = $${paramIndex}
+        RETURNING product_id, name, price
+      `;
+      
+      const result = await pool.query(updateQuery, values);
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({ error: '상품을 찾을 수 없습니다.' });
+      }
+
+      return res.status(200).json({
+        ...result.rows[0],
+        _links: [
+          { rel: 'self', href: `/products/${productId}`, method: 'PATCH' },
+          { rel: 'get_detail', href: `/products/${productId}`, method: 'GET' },
           { rel: 'list', href: '/products', method: 'GET' }
         ]
       });
