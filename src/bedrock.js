@@ -193,9 +193,24 @@ const apiExecutorNode = async (state) => {
     const cleanJson = rawParams.substring(jsonStart, jsonEnd + 1);
     const callInfo = JSON.parse(cleanJson);
 
+    // AI가 작업을 끝냈다고 판단한 경우
+    if (callInfo.action === "finish") {
+      console.log(`   └─ ✅ 분석 완료 (Executor에서 스킵)`);
+      return { apiIterations: state.apiIterations + 1 };
+    }
+
+    // 필수 값인 'r'(경로)이 없는 경우 방어
+    if (!callInfo.r) {
+      throw new Error("API 경로(r) 정보가 누락되었습니다.");
+    }
+
     const targetId = String(callInfo.i || state.caseId).replace(/\{|\}/g, "");
     let targetUrl = `${process.env.ROOT_URL}/${callInfo.r}`;
-    if (targetId !== "null" && !callInfo.r.includes(targetId)) targetUrl += `/${targetId}`;
+    
+    // 에러 지점 수정
+    if (targetId !== "null" && typeof callInfo.r === 'string' && !callInfo.r.includes(targetId)) {
+      targetUrl += `/${targetId}`;
+    }
 
     console.log(`   📡 [API 호출]: ${callInfo.m || 'GET'} ${targetUrl}`);
 
@@ -209,7 +224,8 @@ const apiExecutorNode = async (state) => {
       }
     });
 
-    // 데이터 필터링
+    console.log(`   └─ 🟢 [성공] ${callInfo.r} 데이터 획득`);
+
     let filteredData = res.data;
     if (callInfo.r === 'cases' || callInfo.r === 'case') {
       const { memo, content, ...rest } = res.data;
@@ -227,9 +243,10 @@ const apiExecutorNode = async (state) => {
     };
 
   } catch (e) {
+    // 에러 메시지를 sourceData에 남겨서 다음 planner가 알 수 있게 함
     console.error(`   └─ ❌ [에러]:`, e.message);
     return { 
-      sourceData: (state.sourceData || "") + `\n[에러]: ${e.message}`, 
+      sourceData: (state.sourceData || "") + `\n[에러 알림]: ${e.message}`, 
       apiIterations: state.apiIterations + 1 
     };
   }
