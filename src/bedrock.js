@@ -359,7 +359,7 @@ workflow.addConditionalEdges("verifier", (state) => {
 
   // 시도 횟수가 2회 미만일 때만 유턴 허용
   if (count < 2) {
-    if (status === "RETRY_API" && currentIntent !== "api") return "api";
+    if (status === "RETRY_API" && currentIntent !== "api") return "api_planner";
     if (status === "RETRY_RAG" && currentIntent !== "rag") return "rag";
     if (status === "RETRY_FT" && currentIntent !== "ft") return "ft";
   }
@@ -367,7 +367,7 @@ workflow.addConditionalEdges("verifier", (state) => {
   console.log(`   🏁 [최종 종료]: 더 이상의 유턴 없이 답변을 작성합니다.`);
   return "composer"; 
 }, {
-  api: "api",
+  api: "api_planner",
   rag: "rag",
   ft: "ft",
   composer: "composer"
