@@ -1,15 +1,10 @@
 import 'dotenv/config';
 import { StateGraph, END, START } from "@langchain/langgraph";
 import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
-import * as BedrockRuntime from "@aws-sdk/client-bedrock-runtime";
-import * as BedrockAgent from "@aws-sdk/client-bedrock-agent-runtime";
 import pool from "./db.js";
 import axios from 'axios';
 
-const runtimeModule = BedrockRuntime.default || BedrockRuntime;
-const agentModule = BedrockAgent.default || BedrockAgent;
-const { BedrockRuntimeClient, ApplyGuardrailCommand } = runtimeModule;
-const { BedrockAgentRuntimeClient, RetrieveCommand } = agentModule;
+import { findSimilarContext } from "./services/searchService.js";
 
 const region = process.env.AWS_REGION || "ap-northeast-2";
 const apiKey = process.env.BEDROCK_API_KEY;
@@ -19,11 +14,10 @@ const credentials = {
   accessKeyId: process.env.AWS_ACCESS_KEY_ID,
   secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
 };
-const bedrockRuntime = new BedrockRuntimeClient({ region, credentials });
-const bedrockAgentRuntime = new BedrockAgentRuntimeClient({ region, credentials });
 
 // PostgreSQL 체크포인터
 const checkpointer = new PostgresSaver(pool);
+
 
 
 // Bedrock 프롬프트 관리 호출 (Fetch 기반)
@@ -60,19 +54,11 @@ async function invokePrompt(arn, inputs) {
   return data.output.message.content.find(c => c.text)?.text || "";
 }
 
-// 특정 지식 기반 검색
 
-async function retrieveKB(query, kbId) {
-  if (!kbId) return "지식 베이스 ID가 설정되지 않았습니다.";
-  const command = new RetrieveCommand({
-    knowledgeBaseId: kbId,
-    retrievalQuery: { text: query },
-    retrievalConfiguration: {
-      vectorSearchConfiguration: { numberOfResults: 2 }
-    }
-  });
-  const response = await bedrockAgentRuntime.send(command);
-  return response.retrievalResults.map(res => res.content.text).join('\n\n');
+// pgvector 조회
+async function retrieveKB(query, category) {
+  console.log(`   🔎 [pgvector] ${category} 영역 검색 중...`);
+  return await findSimilarContext(query, category); 
 }
 
 // 그래프 상태 정의
@@ -151,7 +137,8 @@ const supervisorNode = async (state) => {
 const apiNode = async (state) => {
   console.log(`\n🚀 [Node 4: API Agent] 연쇄 호출 시작...`);
   
-  const apiSpec = await retrieveKB(state.userQuery, process.env.BEDROCK_API_KNOWLEDGE_BASE_ID);
+  //const apiSpec = await retrieveKB(state.userQuery, process.env.BEDROCK_API_KNOWLEDGE_BASE_ID);
+  const apiSpec = await retrieveKB(state.userQuery, 'api');
   
   let accumulatedContext = "아직 호출된 API 없음";
   let iterations = 0;
@@ -247,7 +234,8 @@ const apiNode = async (state) => {
 // 노드 5: RAG Agent
 const ragNode = async (state) => {
   console.log(`📚 [Node 5: RAG Agent] 지식 검색 중...`);
-  const docs = await retrieveKB(state.userQuery, process.env.BEDROCK_POLICY_KNOWLEDGE_BASE_ID);
+  // const docs = await retrieveKB(state.userQuery, process.env.BEDROCK_POLICY_KNOWLEDGE_BASE_ID);
+  const docs = await retrieveKB(state.userQuery, 'policy');
   const res = await invokePrompt(process.env.BEDROCK_RAG_ARN, { 
     user_query: state.userQuery,
     retrieved_context: docs 
@@ -300,7 +288,7 @@ const composerNode = async (state) => {
     history: state.historySummary
   });
 
-  // [답변]과 [추천질문] 섹션을 정규표현식으로 분리합니다.
+  // [답변]과 [추천질문] 섹션을 정규표현식으로 분리
   const answerMatch = res.match(/\[답변\]\s*([\s\S]+?)(?=\[추천질문\]|$)/);
   const suggestionsMatch = res.match(/\[추천질문\]\s*([\s\S]+)/);
 

@@ -28,3 +28,4 @@ docker-data/
 # 더미데이터
 data/
 scripts/
+src/migration.js

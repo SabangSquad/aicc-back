@@ -134,6 +134,7 @@ router.post("/", async (req, res) => {
     await client.query('COMMIT');
     client.release();
     client = null;
+
     
     // Bedrock Prompt Management 프롬프트 호출
     const result = await processAICC(message, caseId);
@@ -148,10 +149,9 @@ router.post("/", async (req, res) => {
       ok: true,
       answer: result.answer,
       reason: result.reason,
+      suggestions: result.suggestions,
       caseId: caseId,
-      _links: [
-        { rel: "self", href: "/chat", method: "POST" }
-      ]
+      _links: [{ rel: "self", href: "/chat", method: "POST" }]
     });
   } catch (err) {
     if (client) {
