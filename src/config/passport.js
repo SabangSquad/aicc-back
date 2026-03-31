@@ -15,22 +15,28 @@ export const setupPassport = () => {
       const email = profile.emails[0].value;
 
       try {
-        // 1. .env 어드민 체크
+        // 1. ADMIN
         if (email === process.env.ADMIN_EMAIL) {
           return done(null, { email, name: profile.displayName, role: 'ADMIN' });
         }
 
-        // 2. DB 유저 체크
-        const result = await pool.query('SELECT * FROM agents WHERE email = $1', [email]);
-        const dbUser = result.rows[0];
-        
-        if (dbUser) {
-          // agents 테이블에 있으면 로그인 허용
-          return done(null, { ...dbUser, role: 'USER' });
-        } else {
-          return done(null, false, { message: '등록되지 않은 사용자입니다.' });
+        // 2. OWNER (stores 테이블)
+        const storeResult = await pool.query(
+          'SELECT store_id, name, email FROM stores WHERE email = $1', [email]
+        );
+        if (storeResult.rows[0]) {
+          return done(null, { ...storeResult.rows[0], role: 'OWNER' });
         }
 
+        // 3. CUSTOMER (customers 테이블)
+        const customerResult = await pool.query(
+          'SELECT customer_id, name, email FROM customers WHERE email = $1', [email]
+        );
+        if (customerResult.rows[0]) {
+          return done(null, { ...customerResult.rows[0], role: 'CUSTOMER' });
+        }
+
+        return done(null, false, { message: '등록되지 않은 사용자입니다.' });
       } catch (err) {
         console.error("인증 과정 중 DB 오류 발생:", err.message);
         return done(null, false, { message: '등록되지 않은 사용자입니다.' });

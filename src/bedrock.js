@@ -55,10 +55,10 @@ async function invokePrompt(arn, inputs) {
 }
 
 
-// pgvector 조회
-async function retrieveKB(query, category) {
-  console.log(`   🔎 [pgvector] ${category} 영역 검색 중...`);
-  return await findSimilarContext(query, category); 
+// pgvector 조회 — 해당 가게 매뉴얼에서 유사도 검색
+async function retrieveKB(query, storeId) {
+  console.log(`   🔎 [pgvector] store_id=${storeId} 매뉴얼 검색 중...`);
+  return await findSimilarContext(query, storeId);
 }
 
 // 그래프 상태 정의
@@ -66,11 +66,11 @@ const graphState = {
   channels: {
     userQuery: null,
     caseId: null,
+    storeId: null,
     historySummary: null,
     intent: null,
     sourceData: null,
     retrievedContext: null,
-    verificationStatus: null,
     finalAnswer: null,
     reason: null,
     retryCount: null,
@@ -137,12 +137,11 @@ const supervisorNode = async (state) => {
 const apiNode = async (state) => {
   console.log(`\n🚀 [Node 4: API Agent] 연쇄 호출 시작...`);
   
-  //const apiSpec = await retrieveKB(state.userQuery, process.env.BEDROCK_API_KNOWLEDGE_BASE_ID);
-  const apiSpec = await retrieveKB(state.userQuery, 'api');
+  const apiSpec = await retrieveKB(state.userQuery, state.storeId);
   
   let accumulatedContext = "아직 호출된 API 없음";
   let iterations = 0;
-  const maxIterations = 4;
+  const maxIterations = 2;
 
   while (iterations < maxIterations) {
     console.log(`   --- [회차 ${iterations + 1} / ${maxIterations}] ---`);
@@ -201,14 +200,13 @@ const apiNode = async (state) => {
 
       console.log(`   └─ 🟢 [성공] ${callInfo.r} 데이터 획득`);
       
-      // cases 조회 시 memo와 content가 AI를 방해하지 않도록 처리
+      // cases 조회 시 summary가 AI를 방해하지 않도록 처리
       let filteredData = res.data;
       if (callInfo.r === 'cases' || callInfo.r === 'case') {
-        const { memo, content, ...rest } = res.data;
-        filteredData = { 
-          ...rest, 
-          _note: "아래의 memo/content는 과거 상담 요약일 뿐, 현재 상품 정보가 아닙니다. 무시하고 order_id를 추출하세요.",
-          past_memo_summary: memo?.substring(0, 20) + "..." // 아주 짧게 요약만 남김
+        const { summary, ...rest } = res.data;
+        filteredData = {
+          ...rest,
+          _note: "summary는 과거 상담 요약입니다. 무시하고 order_id 또는 reservation_id를 추출하세요."
         };
       }
 
@@ -234,8 +232,7 @@ const apiNode = async (state) => {
 // 노드 5: RAG Agent
 const ragNode = async (state) => {
   console.log(`📚 [Node 5: RAG Agent] 지식 검색 중...`);
-  // const docs = await retrieveKB(state.userQuery, process.env.BEDROCK_POLICY_KNOWLEDGE_BASE_ID);
-  const docs = await retrieveKB(state.userQuery, 'policy');
+  const docs = await retrieveKB(state.userQuery, state.storeId);
   const res = await invokePrompt(process.env.BEDROCK_RAG_ARN, { 
     user_query: state.userQuery,
     retrieved_context: docs 
@@ -247,43 +244,12 @@ const ragNode = async (state) => {
   };
 };
 
-// 노드 6: FT Agent
-const ftNode = async (state) => {
-  console.log(`🎭 [Node 6: FT Agent] 감정 케어 중...`);
-  const res = await invokePrompt(process.env.BEDROCK_FINE_TUNING_ARN, { 
-    memory_context: state.historySummary,
-    rag_data: state.intent === 'rag' ? state.sourceData : "해당 없음",
-    api_data: state.intent === 'api' ? state.sourceData : "해당 없음",
-    user_input: state.userQuery 
-  });
-  return { 
-    sourceData: res,
-    retryCount: (state.retryCount || 0) + 1
-  };
-};
-
-// 노드 7: Verifier
-const verifierNode = async (state) => {
-  console.log(`⚖️ [Node 7: Verifier] 교차 검증 및 경로 최적화 중...`);
-  const res = await invokePrompt(process.env.BEDROCK_VERIFIER_ARN, { 
-    current_intent: state.intent,
-    retrieved_data: state.sourceData, // RAG 답변 혹은 API 로우 데이터
-    user_input: state.userQuery,
-    history: state.historySummary
-  });
-
-  const status = res.match(/"status":\s*"([^"]+)"/)?.[1] || "P";
-  console.log(`   🔍 [검증 결과]: ${status} (현재 시도 횟수: ${state.retryCount || 0}/1)`);
-  return { verificationStatus: status };
-};
-
-// 노드 8: Composer
+// 노드 6: Composer (Verifier 역할 통합)
 const composerNode = async (state) => {
   console.log(`✍️ [Node 8/9: Composer] 답변 및 추천 질문 구성 중...`);
   
   const res = await invokePrompt(process.env.BEDROCK_COMPOSER_ARN, {
     user_input: state.userQuery,
-    verification_status: state.verificationStatus,
     source_data: state.sourceData,
     history: state.historySummary
   });
@@ -308,67 +274,49 @@ const composerNode = async (state) => {
   };
 };
 
+// 병렬 실행 노드: guardrail + memory를 동시에 실행
+const parallelPreNode = async (state) => {
+  console.log(`\n⚡ [병렬] Guardrail + Memory 동시 실행...`);
+  const [, memoryResult] = await Promise.all([
+    guardrailNode(state),
+    memoryLoaderNode(state),
+  ]);
+  return memoryResult; // guardrail은 차단 시 throw, 통과 시 결과 불필요
+};
+
 // 그래프 구축
 const workflow = new StateGraph(graphState)
-  .addNode("guardrail", guardrailNode)
-  .addNode("memory", memoryLoaderNode)
+  .addNode("pre", parallelPreNode)
   .addNode("supervisor", supervisorNode)
   .addNode("api", apiNode)
   .addNode("rag", ragNode)
-  .addNode("ft", ftNode)
-  .addNode("verifier", verifierNode)
   .addNode("composer", composerNode);
 
-workflow.addEdge(START, "guardrail");
-workflow.addEdge("guardrail", "memory");
-workflow.addEdge("memory", "supervisor");
+workflow.addEdge(START, "pre");
+workflow.addEdge("pre", "supervisor");
 
 workflow.addConditionalEdges("supervisor", (state) => state.intent, {
   api: "api",
   rag: "rag",
-  ft: "ft"
 });
 
-workflow.addEdge("api", "verifier");
-workflow.addEdge("rag", "verifier");
-workflow.addEdge("ft", "verifier");
-
-workflow.addConditionalEdges("verifier", (state) => {
-  const status = state.verificationStatus;
-  const count = state.retryCount || 0;
-  const currentIntent = state.intent; // 현재 어디를 갔다 왔는지 확인
-
-  // 시도 횟수가 2회 미만일 때만 유턴 허용
-  if (count < 2) {
-    if (status === "RETRY_API" && currentIntent !== "api") return "api";
-    if (status === "RETRY_RAG" && currentIntent !== "rag") return "rag";
-    if (status === "RETRY_FT" && currentIntent !== "ft") return "ft";
-  }
-
-  console.log(`   🏁 [최종 종료]: 더 이상의 유턴 없이 답변을 작성합니다.`);
-  return "composer"; 
-}, {
-  api: "api",
-  rag: "rag",
-  ft: "ft",
-  composer: "composer"
-});
-
+workflow.addEdge("api", "composer");
+workflow.addEdge("rag", "composer");
 workflow.addEdge("composer", END);
 
 const app = workflow.compile({ checkpointer });
 
 // AICC 메인 프로세스
-export async function processAICC(userQuery, caseId) {
+export async function processAICC(userQuery, caseId, storeId) {
   try {
     const config = { configurable: { thread_id: String(caseId) } };
-    const finalState = await app.invoke({ userQuery, caseId, retryCount: 0 }, config);
+    const finalState = await app.invoke({ userQuery, caseId, storeId, retryCount: 0 }, config);
     const response = {
       ok: true,
       answer: finalState.finalAnswer, // 메인 답변
       suggestions: finalState.suggestedQuestions || [], // AI가 제안하는 다음 질문들
       caseId: String(caseId),
-      reason: finalState.verificationStatus === "P" ? "검증 완료" : "데이터 확인 필요"
+      reason: "완료"
     };
 
     // 서버 로그 확인용
@@ -393,6 +341,18 @@ export async function analyzeCaseConversation(conversationText) {
     const json = JSON.parse(res.match(/\{[\s\S]*\}/)?.[0] || 'null');
     return { rawText: res, json };
   } catch (e) { return { rawText: res, json: null }; }
+}
+
+// 상담 솔루션 분석 — 숫자는 코드가 계산, AI는 해석+솔루션만
+export async function analyzeSolutions(statsText, summaryText) {
+  const res = await invokePrompt(process.env.BEDROCK_SOLUTION_ANALYZER_ARN, {
+    stats: statsText,
+    summary_data: summaryText
+  });
+  try {
+    const json = JSON.parse(res.match(/\{[\s\S]*\}/)?.[0] || 'null');
+    return json || { raw: res };
+  } catch (e) { return { raw: res }; }
 }
 
 // 체크포인터 초기화

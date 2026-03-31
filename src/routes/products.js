@@ -1,3 +1,7 @@
+// src/routes/products.js
+// GET   /products/:product_id — 상품 단건 조회
+// PATCH /products/:product_id — 상품 정보 수정
+// (목록 조회, 상품 추가는 /stores/:store_id/products 하위로 이동)
 import express from 'express';
 import pool from '../db.js';
 
@@ -12,341 +16,27 @@ const router = express.Router();
 
 /**
  * @swagger
- * /products:
- *   get:
- *     summary: 상품 조회
- *     description: 전체 상품을 조회합니다.
- *     tags: [Products]
- *     responses:
- *       200:
- *         description: 상담 목록 (HATEOAS 적용)
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 data: { type: array }
- *                 _links: { type: array }
- *             example:
- *               data:
- *                 - product_id: 1
- *                   name: "선풍기"
- *                   price: 15000
- *                   _links:
- *                     - rel: "update"
- *                       href: "/products/1"
- *                       method: "PATCH"
- *               _links:
- *                 - rel: "self"
- *                   href: "/products"
- *                   method: "GET"
- *                 - rel: "create"
- *                   href: "/products"
- *                   method: "POST"
- *       400:
- *         description: 잘못된 요청
- *       500:
- *         description: 서버 오류
- */
-
-router.get('/', async (_, res) => {
-  try {
-
-    const listSql = `
-      SELECT p.product_id, p.name, p.price
-      FROM products p
-    `;
-
-    const { rows } = await pool.query(listSql);
-    
-    const data = rows.map(row => ({
-      ...row,
-      _links: [
-        { rel: 'update', href: `/products/${row.product_id}`, method: 'PATCH' }
-      ]
-    }));
-
-    return res.json({ 
-      data,
-      _links: [
-        { rel: 'self', href: '/products', method: 'GET' },
-        { rel: 'create', href: '/products', method: 'POST' }
-      ]
-    });
-  } catch (err) {
-    return res.status(500).json({ error: '서버 오류가 발생했습니다.' });
-  }
-});
-
-
-/**
- * @swagger
- * /products:
- *   post:
- *     summary: "상품 추가"
- *     tags: [Products]
- *     description: 상품을 추가합니다.
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required: [name, price]
- *             properties:
- *               name:
- *                 type: string
- *                 description: 상품명
- *               price:
- *                 type: integer
- *                 description: 상품 가격
- *           example:
- *             name: "선풍기"
- *             price: 15000
- *     responses:
- *       201:
- *         description: "상품 추가 완료"
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 product_id:
- *                   type: integer
- *                 name: 
- *                   type: string
- *                 price:
- *                   type: integer
- *                 _links:
- *                   type: array
- *             example:
- *               product_id: 1
- *               name: "선풍기"
- *               price: 15000
- *               _links:
- *                 - rel: "self"
- *                   href: "/products/1"
- *                   method: "GET"
- *                 - rel: "update"
- *                   href: "/products/1"
- *                   method: "PATCH"
- *       400: 
- *         description: "잘못된 요청"
- *       404: 
- *         description: "상품 추가 오류"
- *       500:   
- *         description: "서버 오류"
- */
-
-router.post('/', async (req, res) => {
-
-
-  const { name, price } = req.body;
-
-  if (typeof name !== 'string' || name.trim().length === 0) {
-    return res.status(400).json({ error: 'name은 비어 있을 수 없습니다.' });
-  }
-  if (!Number.isInteger(price)) {
-    return res.status(400).json({ error: 'price의 형식은 integer이어야 합니다.' });
-  }
-  
-  
-  try {
-
-    const { rows } = await pool.query(
-      `INSERT INTO products (name, price)
-       VALUES ($1, $2)
-       RETURNING product_id, name, price`,
-      [name, price]
-    );
-
-    const newProduct = rows[0];
-    res.status(201).json({
-      ...newProduct,
-      _links: [
-        { rel: 'self', href: `/products/${newProduct.product_id}`, method: 'GET' },
-        { rel: 'update', href: `/products/${newProduct.product_id}`, method: 'PATCH' }
-      ]
-    });
-  } catch (err) {
-    res.status(500).json({ error: '서버 내부 오류가 발생했습니다.'});
-  }
-});
-
-/**
- * @swagger
- * /products/{product_id}:
- *   patch:
- *     summary: 상품 수정
- *     description: 해당 상품을 수정합니다.
- *     tags: [Products]
- *     parameters:
- *       - in: path
- *         name: product_id
- *         required: true
- *         schema:
- *           type: integer
- *         description: 상품 ID
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             properties:
- *               name:
- *                 type: string
- *                 description: 상품명
- *               price:
- *                 type: integer
- *                 description: 상품 가격
- *           example:
- *             name: "화분"
- *             price: 3500
- *     responses:
- *       200:
- *         description: 수정된 상품 정보
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 product_id:
- *                   type: integer
- *                 name:
- *                   type: string
- *                   description: 상품명
- *                 price:
- *                   type: integer
- *                   description: 가격
- *                 _links:
- *                   type: array
- *             example:
- *               product_id: 1
- *               name: "화분"
- *               price: 3500
- *               _links:
- *                 - rel: "self"
- *                   href: "/products/1"
- *                   method: "PATCH"
- *                 - rel: "list"
- *                   href: "/products"
- *                   method: "GET"
- *       400:
- *         description: 잘못된 요청
- *       404:
- *         description: 상품 없음
- *       500:
- *         description: 서버 오류
- */
-
-
-router.route('/:product_id')
-  .patch(async (req, res) => {
-    try {
-      const productId = Number.parseInt(req.params.product_id, 10);
-      if (Number.isNaN(productId)) {
-        return res.status(400).json({ error: '유효하지 않은 상품 ID입니다.' });
-      }
-
-      let { name, price } = req.body ?? {};
-      if (name !== undefined) name = String(name).trim();
-      if (price !== undefined) {
-        const p = Number(price);
-        if (!Number.isInteger(p)) {
-          return res.status(400).json({ error: 'price는 정수여야 합니다.' });
-        }
-        price = p;
-      }
-
-      const fields = { name, price };
-      const updates = [];
-      const values = [];
-      let paramIndex = 1;
-
-      for (const [key, value] of Object.entries(fields)) {
-        if (value !== undefined) {
-          updates.push(`${key} = $${paramIndex++}`);
-          values.push(value);
-        }
-      }
-
-      if (updates.length === 0) {
-        return res.status(400).json({ error: '수정할 내용을 입력해주세요.' });
-      }
-
-      // WHERE 바인딩
-      values.push(productId);
-
-      const updateQuery = `
-        UPDATE products
-        SET ${updates.join(', ')}
-        WHERE product_id = $${paramIndex}
-        RETURNING product_id, name, price
-      `;
-      const result = await pool.query(updateQuery, values);
-
-      if (result.rows.length === 0) {
-        return res.status(404).json({ error: '상품을 찾을 수 없습니다.' });
-      }
-
-      return res.status(200).json({
-        ...result.rows[0],
-        _links: [
-          { rel: 'self', href: `/products/${productId}`, method: 'PATCH' },
-          { rel: 'list', href: '/products', method: 'GET' }
-        ]
-      });
-    } catch (err) {
-      console.error('상품 수정 오류:', err);
-      return res.status(500).json({ error: '서버 오류가 발생했습니다.' });
-    }
-  });
-
-/**
- * @swagger
  * /products/{product_id}:
  *   get:
- *     summary: "상품 상세 조회"
- *     description: "특정 상품의 정보를 상세 조회합니다."
+ *     summary: "상품 단건 조회"
  *     tags: [Products]
  *     parameters:
  *       - in: path
  *         name: product_id
  *         required: true
- *         schema:
- *           type: integer
- *         description: "상품 ID"
+ *         schema: { type: integer }
  *     responses:
- *       200:
- *         description: "상품 정보 조회 성공"
- *         content:
- *           application/json:
- *             example:
- *               product_id: 1
- *               name: "선풍기"
- *               price: 15000
- *               _links:
- *                 - rel: "self"
- *                   href: "/products/1"
- *                   method: "GET"
- *       404:
- *         description: "상품을 찾을 수 없음"
- *       500:
- *         description: "서버 오류"
+ *       200: { description: "상품 정보" }
+ *       404: { description: "상품 없음" }
  *   patch:
- *     summary: "상품 수정"
- *     description: "해당 상품의 이름이나 가격을 수정합니다."
+ *     summary: "상품 정보 수정"
  *     tags: [Products]
  *     parameters:
  *       - in: path
  *         name: product_id
  *         required: true
- *         schema:
- *           type: integer
- *         description: "상품 ID"
+ *         schema: { type: integer }
  *     requestBody:
- *       required: true
  *       content:
  *         application/json:
  *           schema:
@@ -355,15 +45,11 @@ router.route('/:product_id')
  *               name: { type: string }
  *               price: { type: integer }
  *     responses:
- *       200:
- *         description: "수정된 상품 정보"
- *       404:
- *         description: "상품 없음"
- *       500:
- *         description: "서버 오류"
+ *       200: { description: "수정된 상품" }
+ *       400: { description: "잘못된 요청" }
+ *       404: { description: "상품 없음" }
  */
 router.route('/:product_id')
-  // 상품 상세 조회
   .get(async (req, res) => {
     try {
       const productId = Number.parseInt(req.params.product_id, 10);
@@ -371,12 +57,10 @@ router.route('/:product_id')
         return res.status(400).json({ error: '유효하지 않은 상품 ID입니다.' });
       }
 
-      const sql = `
-        SELECT product_id, name, price
-        FROM products
-        WHERE product_id = $1
-      `;
-      const { rows } = await pool.query(sql, [productId]);
+      const { rows } = await pool.query(
+        'SELECT product_id, store_id, name, price FROM products WHERE product_id = $1',
+        [productId]
+      );
 
       if (rows.length === 0) {
         return res.status(404).json({ error: '상품을 찾을 수 없습니다.' });
@@ -386,8 +70,7 @@ router.route('/:product_id')
         ...rows[0],
         _links: [
           { rel: 'self', href: `/products/${productId}`, method: 'GET' },
-          { rel: 'update', href: `/products/${productId}`, method: 'PATCH' },
-          { rel: 'list', href: '/products', method: 'GET' }
+          { rel: 'update', href: `/products/${productId}`, method: 'PATCH' }
         ]
       });
     } catch (err) {
@@ -395,7 +78,6 @@ router.route('/:product_id')
       return res.status(500).json({ error: '서버 오류가 발생했습니다.' });
     }
   })
-  // 상품 수정
   .patch(async (req, res) => {
     try {
       const productId = Number.parseInt(req.params.product_id, 10);
@@ -426,25 +108,21 @@ router.route('/:product_id')
       }
 
       values.push(productId);
-      const updateQuery = `
-        UPDATE products
-        SET ${updates.join(', ')}
-        WHERE product_id = $${paramIndex}
-        RETURNING product_id, name, price
-      `;
-      
-      const result = await pool.query(updateQuery, values);
+      const { rows } = await pool.query(
+        `UPDATE products SET ${updates.join(', ')} WHERE product_id = $${paramIndex}
+         RETURNING product_id, store_id, name, price`,
+        values
+      );
 
-      if (result.rows.length === 0) {
+      if (rows.length === 0) {
         return res.status(404).json({ error: '상품을 찾을 수 없습니다.' });
       }
 
       return res.status(200).json({
-        ...result.rows[0],
+        ...rows[0],
         _links: [
           { rel: 'self', href: `/products/${productId}`, method: 'PATCH' },
-          { rel: 'get_detail', href: `/products/${productId}`, method: 'GET' },
-          { rel: 'list', href: '/products', method: 'GET' }
+          { rel: 'get_detail', href: `/products/${productId}`, method: 'GET' }
         ]
       });
     } catch (err) {
@@ -452,7 +130,5 @@ router.route('/:product_id')
       return res.status(500).json({ error: '서버 오류가 발생했습니다.' });
     }
   });
-
-
 
 export default router;
