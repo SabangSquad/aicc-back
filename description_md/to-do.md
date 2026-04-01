@@ -34,7 +34,44 @@ AI가 해결 불가 판단 시 자동으로 상담사(OWNER)에게 넘기는 기
 
 ---
 
-### 2. 프론트 연동
+### 2. 목록 API 필터 추가 (페이지네이션 + status + 날짜)
+
+**대상 엔드포인트 + 추가할 필터:**
+
+| 엔드포인트 | page/limit | status | start/end | 현재 있는 필터 |
+|-----------|-----------|--------|-----------|-------------|
+| GET /stores/:id/cases | 추가 | 있음 | 있음 | status, emotion, category, start, end |
+| GET /stores/:id/orders | 추가 | **추가** | **추가** | 없음 |
+| GET /stores/:id/reservations | 추가 | **추가** | **추가** | 없음 |
+| GET /stores/:id/manuals | 추가 | - | - | category |
+| GET /stores/:id/products | 추가 | - | - | 없음 |
+| GET /customers/:id/cases | 추가 | 있음 | - | status, category |
+| GET /customers/:id/orders | 추가 | **추가** | - | 없음 |
+| GET /customers/:id/reservations | 추가 | **추가** | - | 없음 |
+
+**공통 파라미터:**
+- `page` (기본값 1)
+- `limit` (기본값 20, 최대 100)
+- 응답에 `total` 포함 → 프론트에서 "더보기" 버튼 표시 여부 판단
+
+**응답 구조:**
+```json
+{
+  "data": [...],
+  "total": 150,
+  "page": 1,
+  "limit": 20,
+  "_links": [...]
+}
+```
+
+**변경 파일:**
+- `src/routes/stores.js`
+- `src/routes/customers.js`
+
+---
+
+### 3. 프론트 연동
 
 1. **CORS 설정** — 프론트 개발 시작하면 `npm install cors` + origin 설정
 2. **프론트에서 테스트** — Swagger(/api-docs)로 전체 API 동작 확인
@@ -64,3 +101,4 @@ AI가 해결 불가 판단 시 자동으로 상담사(OWNER)에게 넘기는 기
 | .env 레거시 ARN 정리 (FT, Verifier, KB ID 삭제) | 완료 |
 | stores.js 미사용 crypto import 제거 | 완료 |
 | Guardrail 표준티어(교차추론) 전환 | 완료 |
+| 목록 API 페이지네이션 (page/limit/total) + status/날짜 필터 | 완료 |

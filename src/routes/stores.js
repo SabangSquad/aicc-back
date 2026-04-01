@@ -5,6 +5,7 @@ import { isAdmin, isStoreOwner } from '../middlewares/auth.js';
 import { ALL_STATUSES } from '../constants/caseStatus.js';
 import { generateEmbedding } from '../services/embeddingService.js';
 import { toSql } from 'pgvector/pg';
+import { parsePagination } from '../utils/pagination.js';
 
 const router = express.Router();
 
@@ -265,15 +266,23 @@ router.get('/:store_id/cases', isStoreOwner, async (req, res) => {
       conditions.push(`c.created_at <= $${params.length}::timestamptz`);
     }
 
+    const { page, limit, offset } = parsePagination(req.query);
+
+    const countRes = await pool.query(
+      `SELECT COUNT(*)::int FROM cases c WHERE ${conditions.join(' AND ')}`, params
+    );
+    const total = countRes.rows[0].count;
+
     const { rows } = await pool.query(
       `SELECT case_id, customer_id, store_id, order_id, reservation_id,
               category, status, emotion, created_at, closed_at
-       FROM cases c WHERE ${conditions.join(' AND ')} ORDER BY c.created_at DESC`,
-      params
+       FROM cases c WHERE ${conditions.join(' AND ')} ORDER BY c.created_at DESC
+       LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offset]
     );
 
     return res.json({
-      data: rows,
+      data: rows, total, page, limit,
       _links: [{ rel: 'self', href: `/stores/${storeId}/cases`, method: 'GET' }]
     });
   } catch (err) {
@@ -311,18 +320,24 @@ router.get('/:store_id/satisfactions', isStoreOwner, async (req, res) => {
     if (Number.isNaN(storeId)) return res.status(400).json({ error: '유효하지 않은 가게 ID입니다.' });
 
     const { start, end } = req.query;
+    const { page, limit, offset } = parsePagination(req.query);
+
+    const baseWhere = `WHERE store_id = $1
+      AND ($2::timestamptz IS NULL OR collected_at >= $2)
+      AND ($3::timestamptz IS NULL OR collected_at <= $3)`;
+    const baseParams = [storeId, start ?? null, end ?? null];
+
+    const countRes = await pool.query(`SELECT COUNT(*)::int FROM satisfactions ${baseWhere}`, baseParams);
+    const total = countRes.rows[0].count;
+
     const { rows } = await pool.query(
       `SELECT satisfaction_id, case_id, store_id, score, collected_at
-       FROM satisfactions
-       WHERE store_id = $1
-         AND ($2::timestamptz IS NULL OR collected_at >= $2)
-         AND ($3::timestamptz IS NULL OR collected_at <= $3)
-       ORDER BY collected_at DESC`,
-      [storeId, start ?? null, end ?? null]
+       FROM satisfactions ${baseWhere} ORDER BY collected_at DESC LIMIT $4 OFFSET $5`,
+      [...baseParams, limit, offset]
     );
 
     return res.json({
-      data: rows,
+      data: rows, total, page, limit,
       _links: [{ rel: 'self', href: `/stores/${storeId}/satisfactions`, method: 'GET' }]
     });
   } catch (err) {
@@ -343,6 +358,21 @@ router.get('/:store_id/satisfactions', isStoreOwner, async (req, res) => {
  *         name: store_id
  *         required: true
  *         schema: { type: integer }
+ *       - in: query
+ *         name: status
+ *         schema: { type: string, enum: ["준비","배송","완료","반품","취소"] }
+ *       - in: query
+ *         name: start
+ *         schema: { type: string, format: date-time }
+ *       - in: query
+ *         name: end
+ *         schema: { type: string, format: date-time }
+ *       - in: query
+ *         name: page
+ *         schema: { type: integer, default: 1 }
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer, default: 20 }
  *     responses:
  *       200: { description: "주문 목록" }
  */
@@ -351,14 +381,28 @@ router.get('/:store_id/orders', isStoreOwner, async (req, res) => {
     const storeId = parseInt(req.params.store_id, 10);
     if (Number.isNaN(storeId)) return res.status(400).json({ error: '유효하지 않은 가게 ID입니다.' });
 
+    const { status, start, end } = req.query;
+    const { page, limit, offset } = parsePagination(req.query);
+    const conditions = ['store_id = $1'];
+    const params = [storeId];
+
+    if (status) { params.push(status); conditions.push(`status = $${params.length}`); }
+    if (start)  { params.push(start);  conditions.push(`ordered_at >= $${params.length}::timestamptz`); }
+    if (end)    { params.push(end);    conditions.push(`ordered_at <= $${params.length}::timestamptz`); }
+
+    const where = conditions.join(' AND ');
+    const countRes = await pool.query(`SELECT COUNT(*)::int FROM orders WHERE ${where}`, params);
+    const total = countRes.rows[0].count;
+
     const { rows } = await pool.query(
       `SELECT order_id, customer_id, store_id, status, total_price, ordered_at
-       FROM orders WHERE store_id = $1 ORDER BY ordered_at DESC`,
-      [storeId]
+       FROM orders WHERE ${where} ORDER BY ordered_at DESC
+       LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offset]
     );
 
     return res.json({
-      data: rows,
+      data: rows, total, page, limit,
       _links: [{ rel: 'self', href: `/stores/${storeId}/orders`, method: 'GET' }]
     });
   } catch (err) {
@@ -379,6 +423,21 @@ router.get('/:store_id/orders', isStoreOwner, async (req, res) => {
  *         name: store_id
  *         required: true
  *         schema: { type: integer }
+ *       - in: query
+ *         name: status
+ *         schema: { type: string, enum: ["완료","취소"] }
+ *       - in: query
+ *         name: start
+ *         schema: { type: string, format: date-time }
+ *       - in: query
+ *         name: end
+ *         schema: { type: string, format: date-time }
+ *       - in: query
+ *         name: page
+ *         schema: { type: integer, default: 1 }
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer, default: 20 }
  *     responses:
  *       200: { description: "예약 목록" }
  */
@@ -387,14 +446,28 @@ router.get('/:store_id/reservations', isStoreOwner, async (req, res) => {
     const storeId = parseInt(req.params.store_id, 10);
     if (Number.isNaN(storeId)) return res.status(400).json({ error: '유효하지 않은 가게 ID입니다.' });
 
+    const { status, start, end } = req.query;
+    const { page, limit, offset } = parsePagination(req.query);
+    const conditions = ['store_id = $1'];
+    const params = [storeId];
+
+    if (status) { params.push(status); conditions.push(`status = $${params.length}`); }
+    if (start)  { params.push(start);  conditions.push(`reserved_at >= $${params.length}::timestamptz`); }
+    if (end)    { params.push(end);    conditions.push(`reserved_at <= $${params.length}::timestamptz`); }
+
+    const where = conditions.join(' AND ');
+    const countRes = await pool.query(`SELECT COUNT(*)::int FROM reservations WHERE ${where}`, params);
+    const total = countRes.rows[0].count;
+
     const { rows } = await pool.query(
       `SELECT reservation_id, store_id, customer_id, reserved_at, status, headcount
-       FROM reservations WHERE store_id = $1 ORDER BY reserved_at DESC`,
-      [storeId]
+       FROM reservations WHERE ${where} ORDER BY reserved_at DESC
+       LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offset]
     );
 
     return res.json({
-      data: rows,
+      data: rows, total, page, limit,
       _links: [{ rel: 'self', href: `/stores/${storeId}/reservations`, method: 'GET' }]
     });
   } catch (err) {
@@ -461,14 +534,22 @@ router.route('/:store_id/manuals')
         conditions.push(`category = $${params.length}`);
       }
 
+      const { page, limit, offset } = parsePagination(req.query);
+
+      const countRes = await pool.query(
+        `SELECT COUNT(*)::int FROM manuals WHERE ${conditions.join(' AND ')}`, params
+      );
+      const total = countRes.rows[0].count;
+
       const { rows } = await pool.query(
         `SELECT manual_id, store_id, title, category, content, edited_at
-         FROM manuals WHERE ${conditions.join(' AND ')} ORDER BY category DESC`,
-        params
+         FROM manuals WHERE ${conditions.join(' AND ')} ORDER BY category DESC
+         LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+        [...params, limit, offset]
       );
 
       return res.json({
-        data: rows,
+        data: rows, total, page, limit,
         _links: [
           { rel: 'self', href: `/stores/${storeId}/manuals`, method: 'GET' },
           { rel: 'create', href: `/stores/${storeId}/manuals`, method: 'POST' }
@@ -643,13 +724,18 @@ router.route('/:store_id/products')
       const storeId = parseInt(req.params.store_id, 10);
       if (Number.isNaN(storeId)) return res.status(400).json({ error: '유효하지 않은 가게 ID입니다.' });
 
+      const { page, limit, offset } = parsePagination(req.query);
+
+      const countRes = await pool.query('SELECT COUNT(*)::int FROM products WHERE store_id = $1', [storeId]);
+      const total = countRes.rows[0].count;
+
       const { rows } = await pool.query(
-        'SELECT product_id, store_id, name, price FROM products WHERE store_id = $1',
-        [storeId]
+        'SELECT product_id, store_id, name, price FROM products WHERE store_id = $1 LIMIT $2 OFFSET $3',
+        [storeId, limit, offset]
       );
 
       return res.json({
-        data: rows,
+        data: rows, total, page, limit,
         _links: [
           { rel: 'self', href: `/stores/${storeId}/products`, method: 'GET' },
           { rel: 'create', href: `/stores/${storeId}/products`, method: 'POST' }

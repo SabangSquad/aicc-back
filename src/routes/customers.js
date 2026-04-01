@@ -2,6 +2,7 @@
 import express from 'express';
 import pool from '../db.js';
 import { isCustomerOrOwner, isOwner } from '../middlewares/auth.js';
+import { parsePagination } from '../utils/pagination.js';
 
 const router = express.Router();
 
@@ -245,15 +246,22 @@ router.get('/:customer_id/cases', isCustomerOrOwner, async (req, res) => {
       params.push(cat);
     }
 
+    const { page, limit, offset } = parsePagination(req.query);
+    const whereSql = where.join(' AND ');
+
+    const countRes = await pool.query(`SELECT COUNT(*)::int FROM cases c WHERE ${whereSql}`, params);
+    const total = countRes.rows[0].count;
+
     const { rows } = await pool.query(
       `SELECT c.case_id, c.store_id, c.customer_id, c.order_id, c.reservation_id,
               c.status, c.category, c.emotion, c.created_at, c.closed_at
-       FROM cases c WHERE ${where.join(' AND ')} ORDER BY c.created_at DESC`,
-      params
+       FROM cases c WHERE ${whereSql} ORDER BY c.created_at DESC
+       LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offset]
     );
 
     return res.json({
-      data: rows,
+      data: rows, total, page, limit,
       _links: [
         { rel: 'self', href: `/customers/${customerId}/cases${req._parsedUrl.search || ''}`, method: 'GET' },
         { rel: 'get_customer', href: `/customers/${customerId}`, method: 'GET' }
@@ -277,6 +285,15 @@ router.get('/:customer_id/cases', isCustomerOrOwner, async (req, res) => {
  *         name: customer_id
  *         required: true
  *         schema: { type: integer }
+ *       - in: query
+ *         name: status
+ *         schema: { type: string, enum: ["준비","배송","완료","반품","취소"] }
+ *       - in: query
+ *         name: page
+ *         schema: { type: integer, default: 1 }
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer, default: 20 }
  *     responses:
  *       200: { description: "주문 목록" }
  */
@@ -287,14 +304,26 @@ router.get('/:customer_id/orders', isCustomerOrOwner, async (req, res) => {
       return res.status(400).json({ error: '유효하지 않은 고객 ID입니다.' });
     }
 
+    const { status } = req.query;
+    const { page, limit, offset } = parsePagination(req.query);
+    const conditions = ['customer_id = $1'];
+    const params = [customerId];
+
+    if (status) { params.push(status); conditions.push(`status = $${params.length}`); }
+
+    const where = conditions.join(' AND ');
+    const countRes = await pool.query(`SELECT COUNT(*)::int FROM orders WHERE ${where}`, params);
+    const total = countRes.rows[0].count;
+
     const { rows } = await pool.query(
       `SELECT order_id, store_id, ordered_at, status, total_price
-       FROM orders WHERE customer_id = $1 ORDER BY ordered_at DESC`,
-      [customerId]
+       FROM orders WHERE ${where} ORDER BY ordered_at DESC
+       LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offset]
     );
 
     return res.json({
-      data: rows,
+      data: rows, total, page, limit,
       _links: [
         { rel: 'self', href: `/customers/${customerId}/orders`, method: 'GET' },
         { rel: 'get_customer', href: `/customers/${customerId}`, method: 'GET' }
@@ -318,6 +347,15 @@ router.get('/:customer_id/orders', isCustomerOrOwner, async (req, res) => {
  *         name: customer_id
  *         required: true
  *         schema: { type: integer }
+ *       - in: query
+ *         name: status
+ *         schema: { type: string, enum: ["완료","취소"] }
+ *       - in: query
+ *         name: page
+ *         schema: { type: integer, default: 1 }
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer, default: 20 }
  *     responses:
  *       200: { description: "예약 목록" }
  */
@@ -328,14 +366,26 @@ router.get('/:customer_id/reservations', isCustomerOrOwner, async (req, res) => 
       return res.status(400).json({ error: '유효하지 않은 고객 ID입니다.' });
     }
 
+    const { status } = req.query;
+    const { page, limit, offset } = parsePagination(req.query);
+    const conditions = ['customer_id = $1'];
+    const params = [customerId];
+
+    if (status) { params.push(status); conditions.push(`status = $${params.length}`); }
+
+    const where = conditions.join(' AND ');
+    const countRes = await pool.query(`SELECT COUNT(*)::int FROM reservations WHERE ${where}`, params);
+    const total = countRes.rows[0].count;
+
     const { rows } = await pool.query(
       `SELECT reservation_id, store_id, customer_id, reserved_at, status, headcount
-       FROM reservations WHERE customer_id = $1 ORDER BY reserved_at DESC`,
-      [customerId]
+       FROM reservations WHERE ${where} ORDER BY reserved_at DESC
+       LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offset]
     );
 
     return res.json({
-      data: rows,
+      data: rows, total, page, limit,
       _links: [
         { rel: 'self', href: `/customers/${customerId}/reservations`, method: 'GET' },
         { rel: 'get_customer', href: `/customers/${customerId}`, method: 'GET' }

@@ -1,6 +1,6 @@
 # AICC-Back 코드베이스 분석 보고서
 
-> 분석일: 2026-03-31
+> 분석일: 2026-04-01
 > 대상 경로: `c:\Users\ChupopChoos\aicc-back`
 
 ---
@@ -32,8 +32,8 @@ AICC-Back은 **AI 기반 컨택센터(AI Contact Center) 백엔드**다.
 ```
 aicc-back/
 ├── src/
-│   ├── app.js                  # Express 서버 진입점
-│   ├── db.js                   # PostgreSQL 커넥션 풀
+│   ├── app.js                  # Express 서버 진입점 (중앙 에러 핸들러 포함)
+│   ├── db.js                   # PostgreSQL 커넥션 풀 (공유)
 │   ├── bedrock.js              # LangGraph AI 오케스트레이션
 │   ├── swagger.js              # Swagger 설정
 │   ├── config/
@@ -44,9 +44,9 @@ aicc-back/
 │   │   └── auth.js             # isAuthorized, isAdmin, isOwner, isStoreOwner, isCustomerOrOwner
 │   ├── routes/
 │   │   ├── auth.js             # OAuth 로그인/로그아웃
-│   │   ├── stores.js           # 가게 CRUD + 하위 리소스 13개
+│   │   ├── stores.js           # 가게 CRUD + 하위 리소스 13개 (pagination, 필터, solutions)
 │   │   ├── cases.js            # 상담 CRUD + messages + satisfactions 7개
-│   │   ├── customers.js        # 고객 CRUD + 목록 6개
+│   │   ├── customers.js        # 고객 CRUD + 목록 6개 (pagination, status 필터)
 │   │   ├── chat.js             # 챗봇 AI 질의/종료/분석 3개
 │   │   ├── orders.js           # 주문 CRUD + items + shipments 9개
 │   │   ├── shipments.js        # 배송 CRUD + tracks 6개
@@ -54,8 +54,10 @@ aicc-back/
 │   │   ├── products.js         # 상품 조회/수정 2개
 │   │   └── manuals.js          # 매뉴얼 단건 조회 1개
 │   ├── services/
-│   │   ├── searchService.js    # pgvector 유사도 검색
-│   │   └── embeddingService.js # Bedrock Titan 벡터 생성
+│   │   ├── searchService.js    # pgvector 유사도 검색 (manuals 테이블, 공유 pool)
+│   │   └── embeddingService.js # Bedrock Titan 벡터 생성 (generateEmbedding)
+│   ├── utils/
+│   │   └── pagination.js       # 공통 페이지네이션 파서 (parsePagination)
 │   └── scripts/
 │       └── embed-manuals.js    # 기존 매뉴얼 일괄 임베딩
 ├── description_md/             # 프로젝트 문서
@@ -80,9 +82,10 @@ aicc-back/
 | AI 엔진 (bedrock) | 1 | ~340 |
 | 인증 (passport, auth) | 2 | ~120 |
 | 라우터 (10개) | 10 | ~3,200 |
-| 서비스 (2개) | 2 | ~50 |
+| 서비스 (2개) | 2 | ~55 |
+| 유틸 (pagination) | 1 | ~15 |
 | 상수 + 스크립트 | 2 | ~75 |
-| **합계** | **20** | **~3,900** |
+| **합계** | **21** | **~3,935** |
 
 ---
 
@@ -154,22 +157,21 @@ orders (1)
 
 ### 4.1 가게 (stores.js — 13개)
 
-| 메서드 | 경로 | 설명 | 인가 |
-|--------|------|------|------|
-| POST | `/stores` | 가게 추가 | isAdmin |
-| GET | `/stores/:store_id` | 가게 정보 조회 | isAuthorized |
-| PATCH | `/stores/:store_id` | 가게 정보 수정 | isStoreOwner |
-| GET | `/stores/:store_id/cases` | 가게 상담 목록 | isStoreOwner |
-| GET | `/stores/:store_id/satisfactions` | 가게 만족도 | isStoreOwner |
-| GET | `/stores/:store_id/orders` | 가게 주문 목록 | isStoreOwner |
-| GET | `/stores/:store_id/reservations` | 가게 예약 목록 | isStoreOwner |
-| GET | `/stores/:store_id/manuals` | 가게 매뉴얼 목록 | isAuthorized |
-| POST | `/stores/:store_id/manuals` | 매뉴얼 추가 (+ 임베딩 자동 생성) | isStoreOwner |
-| PATCH | `/stores/:store_id/manuals/:manual_id` | 매뉴얼 수정 (content 변경 시 임베딩 재생성) | isStoreOwner |
-| GET | `/stores/:store_id/products` | 가게 상품 목록 | isAuthorized |
-| POST | `/stores/:store_id/products` | 상품 추가 | isStoreOwner |
-| GET | `/stores/:store_id/solutions` | 상담 솔루션 분석 (AI) | isStoreOwner |
-| POST | `/stores/:store_id/products` | 상품 추가 | isStoreOwner |
+| 메서드 | 경로 | 설명 | 인가 | 비고 |
+|--------|------|------|------|------|
+| POST | `/stores` | 가게 추가 | isAdmin | |
+| GET | `/stores/:store_id` | 가게 정보 조회 | isAuthorized | |
+| PATCH | `/stores/:store_id` | 가게 정보 수정 | isStoreOwner | |
+| GET | `/stores/:store_id/cases` | 가게 상담 목록 | isStoreOwner | pagination |
+| GET | `/stores/:store_id/satisfactions` | 가게 만족도 | isStoreOwner | pagination |
+| GET | `/stores/:store_id/orders` | 가게 주문 목록 | isStoreOwner | pagination + status/start/end 필터 |
+| GET | `/stores/:store_id/reservations` | 가게 예약 목록 | isStoreOwner | pagination + status/start/end 필터 |
+| GET | `/stores/:store_id/manuals` | 가게 매뉴얼 목록 | isAuthorized | pagination |
+| POST | `/stores/:store_id/manuals` | 매뉴얼 추가 (+ 임베딩 자동 생성) | isStoreOwner | |
+| PATCH | `/stores/:store_id/manuals/:manual_id` | 매뉴얼 수정 (content 변경 시 임베딩 재생성) | isStoreOwner | |
+| GET | `/stores/:store_id/products` | 가게 상품 목록 | isAuthorized | pagination |
+| POST | `/stores/:store_id/products` | 상품 추가 | isStoreOwner | |
+| GET | `/stores/:store_id/solutions` | 상담 솔루션 분석 (AI) | isStoreOwner | `?hours=N` |
 
 ### 4.2 상담 (cases.js — 7개)
 
@@ -185,14 +187,14 @@ orders (1)
 
 ### 4.3 고객 (customers.js — 6개)
 
-| 메서드 | 경로 | 설명 | 인가 |
-|--------|------|------|------|
-| POST | `/customers` | 고객 추가 | isOwner |
-| GET | `/customers/:customer_id` | 고객 정보 조회 | isCustomerOrOwner |
-| PATCH | `/customers/:customer_id` | 고객 정보 수정 | isCustomerOrOwner |
-| GET | `/customers/:customer_id/cases` | 고객 상담 목록 | isCustomerOrOwner |
-| GET | `/customers/:customer_id/orders` | 고객 주문 목록 | isCustomerOrOwner |
-| GET | `/customers/:customer_id/reservations` | 고객 예약 목록 | isCustomerOrOwner |
+| 메서드 | 경로 | 설명 | 인가 | 비고 |
+|--------|------|------|------|------|
+| POST | `/customers` | 고객 추가 | isOwner | |
+| GET | `/customers/:customer_id` | 고객 정보 조회 | isCustomerOrOwner | |
+| PATCH | `/customers/:customer_id` | 고객 정보 수정 | isCustomerOrOwner | |
+| GET | `/customers/:customer_id/cases` | 고객 상담 목록 | isCustomerOrOwner | pagination + status/category 필터 |
+| GET | `/customers/:customer_id/orders` | 고객 주문 목록 | isCustomerOrOwner | pagination + status 필터 |
+| GET | `/customers/:customer_id/reservations` | 고객 예약 목록 | isCustomerOrOwner | pagination + status 필터 |
 
 ### 4.4 매뉴얼 (manuals.js — 1개)
 
@@ -288,13 +290,20 @@ LangGraph 상태 머신 기반 파이프라인 (최적화 완료):
 guardrail + memory (병렬) → supervisor → [API | RAG] → composer → END
 ```
 
+이전 버전 대비 변경 사항:
+- FT(Fine-Tuned) 에이전트 노드 제거
+- Verifier 노드 제거 (검증 단계 삭제)
+- Guardrail + Memory 노드 병렬 실행 (순차→병렬)
+- Guardrail: 표준 티어 + 교차 리전 추론(cross-region inference) 적용
+
 | 노드 | 역할 | Bedrock 호출 |
 |------|------|-------------|
-| Guardrail + Memory (병렬) | 입력 검증 + 최근 5개 메시지 맥락 요약 | Guardrail API + invokePrompt |
+| Guardrail (병렬) | 입력 안전성 검증 (표준 티어, 교차 리전 추론) | Bedrock Guardrail API |
+| Memory (병렬) | 최근 5개 메시지 맥락 요약 | invokePrompt |
 | Supervisor | 질문 분류 (api / rag) | invokePrompt |
 | API Agent | 내부 REST API 자동 호출 (최대 2회) | invokePrompt (루프) |
 | RAG Agent | pgvector 매뉴얼 검색 + LLM 답변 | invokePrompt |
-| Composer | 검증 + 최종 답변 + 추천 질문 3개 | invokePrompt |
+| Composer | 최종 답변 + 추천 질문 3개 | invokePrompt |
 
 **호출 횟수:** 3~4회 (약 6~10초)
 
@@ -320,12 +329,13 @@ guardrail + memory (병렬) → supervisor → [API | RAG] → composer → END
 
 ## 7. 벡터 DB & RAG 파이프라인
 
-### 임베딩
+### 임베딩 (embeddingService.js)
 
 - **모델**: Amazon Titan Embed Text v2 (1024차원, 정규화)
 - **저장**: manuals.embedding 컬럼 (pgvector)
-- **자동 생성**: POST/PATCH manuals 시 content → 임베딩 자동 생성
+- **자동 생성**: POST/PATCH manuals 시 content → `generateEmbedding()` 호출 → 임베딩 자동 생성
 - **일괄 처리**: `node src/scripts/embed-manuals.js`
+- **서비스 분리**: `embeddingService.js`가 벡터 생성, `searchService.js`가 검색 전담
 
 ### 검색 (searchService.js)
 
@@ -337,11 +347,52 @@ ORDER BY embedding <=> $1 LIMIT 2
 
 - 해당 가게 매뉴얼만 필터 (store_id)
 - 코사인 유사도 top 2 반환
-- 공유 pool 사용 (db.js)
+- **db.js의 공유 pool 사용** (독립 클라이언트 생성 없음)
+- 내부적으로 `getQuestionVector()` → `findSimilarContext()` 순서로 실행
+- bedrock.js에서 `findSimilarContext`를 직접 import하여 RAG 노드에서 호출
 
 ---
 
-## 8. 채팅 세션 관리
+## 8. 페이지네이션 (pagination.js)
+
+### 공통 유틸: `parsePagination(query)`
+
+`src/utils/pagination.js`에 정의된 단일 함수로 모든 목록 엔드포인트에서 공유.
+
+```js
+// 기본값: page=1, limit=20 / 상한: limit=100
+const { page, limit, offset } = parsePagination(req.query);
+```
+
+### 목록 응답 형식 (페이지네이션 적용 엔드포인트 공통)
+
+```json
+{
+  "data": [...],
+  "total": 42,
+  "page": 1,
+  "limit": 20,
+  "_links": [...]
+}
+```
+
+### 페이지네이션 적용 엔드포인트
+
+| 라우터 | 엔드포인트 | 추가 필터 |
+|--------|-----------|-----------|
+| stores.js | `GET /stores/:id/cases` | — |
+| stores.js | `GET /stores/:id/satisfactions` | — |
+| stores.js | `GET /stores/:id/orders` | status, start, end (ordered_at 범위) |
+| stores.js | `GET /stores/:id/reservations` | status, start, end (reserved_at 범위) |
+| stores.js | `GET /stores/:id/manuals` | — |
+| stores.js | `GET /stores/:id/products` | — |
+| customers.js | `GET /customers/:id/cases` | status, category |
+| customers.js | `GET /customers/:id/orders` | status |
+| customers.js | `GET /customers/:id/reservations` | status |
+
+---
+
+## 9. 채팅 세션 관리
 
 ### 세션 흐름
 
@@ -362,7 +413,7 @@ WebSocket 없이 REST polling으로 동작.
 
 ---
 
-## 9. 설계 패턴
+## 10. 설계 패턴
 
 | 패턴 | 설명 |
 |------|------|
@@ -370,15 +421,18 @@ WebSocket 없이 REST polling으로 동작.
 | 파라미터화 쿼리 | `$1, $2` 바인딩 → SQL 인젝션 방지 |
 | 트랜잭션 | 주문 삭제 시 `BEGIN/COMMIT` (tracks→shipments→items→orders) |
 | 비동기 분석 | `setImmediate`로 종료 분석 비차단 |
-| Rate Limiting | /chats 분당 10회 제한 |
-| 중앙 에러 핸들러 | app.js 하단에 통합 에러 미들웨어 |
+| Rate Limiting | /chats 분당 10회 제한 (express-rate-limit) |
+| 중앙 에러 핸들러 | app.js 하단에 통합 에러 미들웨어 (`(err, req, res, next)`) |
+| 공유 pool | db.js에서 단일 커넥션 풀 export → 모든 라우터/서비스에서 재사용 |
+| 공통 페이지네이션 | `parsePagination` 유틸로 page/limit/offset 일관 처리 |
 | 소유권 검증 | isStoreOwner — OWNER가 자기 가게만 접근 |
 | 세션 기반 채팅 | express-session 쿠키로 caseId 유지 (비로그인 포함) |
 | AI 환각 방지 | 솔루션 분석 시 숫자는 SQL, 해석만 AI |
+| 서비스 분리 | 임베딩(embeddingService) / 검색(searchService) 역할 분리 |
 
 ---
 
-## 10. 환경 변수 (.env)
+## 11. 환경 변수 (.env)
 
 | 변수 | 용도 |
 |------|------|

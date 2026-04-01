@@ -12,26 +12,33 @@
 [매뉴얼 저장]
 POST /stores/:store_id/manuals { title, category, content }
   ↓
-stores.js
-  ├─ content → Bedrock Titan Embed v2 → 1024차원 벡터 생성
+src/routes/stores.js POST "/:store_id/manuals"
+  ├─ content → src/services/embeddingService.js generateEmbedding()
+  │            → Bedrock Titan Embed v2 → 1024차원 벡터 생성
   └─ INSERT INTO manuals (..., embedding) → pgvector에 저장
 
 [RAG 검색 — 고객 질문 시]
 POST /chats { message, store_id }
   ↓
-bedrock.js → supervisor → intent='rag' → ragNode
+src/routes/chat.js → processAICC()
   ↓
-retrieveKB(query, storeId)
+src/bedrock.js → supervisorNode → intent='rag' → ragNode
   ↓
-searchService.js → findSimilarContext(query, storeId)
-  ├─ 고객 질문 → Bedrock Titan → 1024차원 벡터 변환
+src/bedrock.js retrieveKB(query, storeId)
+  ↓
+src/services/searchService.js → findSimilarContext(query, storeId)
+  ├─ 고객 질문 → src/services/searchService.js getQuestionVector()
+  │              → Bedrock Titan → 1024차원 벡터 변환
   └─ SELECT content FROM manuals
      WHERE store_id = $2
      ORDER BY embedding <=> $1 LIMIT 2
   ↓
 유사도 top 2 매뉴얼 content 반환
   ↓
+src/bedrock.js ragNode → invokePrompt(BEDROCK_RAG_ARN, { user_query, retrieved_context })
 RAG 프롬프트: "다음 규정을 참고하여 답변하세요: {context}"
+  ↓
+src/bedrock.js composerNode → 최종 답변 + 추천 질문 생성
   ↓
 AI 답변 생성
 ```
@@ -163,19 +170,19 @@ manual_id=4  "교환 규정"        → 벡터 D [0.02, -0.02, ...]
 ```
 고객: "환불 규정 알려주세요"
   ↓
-[1단계] chat.js → processAICC("환불 규정 알려주세요", caseId=42, storeId=1)
+[1단계] src/routes/chat.js → src/bedrock.js processAICC("환불 규정 알려주세요", caseId=42, storeId=1)
   ↓
-[2단계] bedrock.js → supervisor 노드
+[2단계] src/bedrock.js supervisorNode
   → "환불 규정" = 정책 질문 → intent = "rag"
   ↓
-[3단계] ragNode 실행
-  → retrieveKB("환불 규정 알려주세요", 1)
-  → searchService.js → findSimilarContext()
-    → "환불 규정 알려주세요" → Titan API → 벡터 Q
+[3단계] src/bedrock.js ragNode 실행
+  → src/bedrock.js retrieveKB("환불 규정 알려주세요", 1)
+  → src/services/searchService.js findSimilarContext()
+    → src/services/searchService.js getQuestionVector() → Titan API → 벡터 Q
     → SQL: SELECT content FROM manuals WHERE store_id=1 ORDER BY embedding <=> Q LIMIT 2
     → 결과: "# 에브리샵 환불 규정\n환불은 7일 이내..." + "# 에브리샵 교환 규정\n..."
   ↓
-[4단계] RAG 프롬프트 호출 (AWS Bedrock)
+[4단계] src/bedrock.js ragNode → invokePrompt(BEDROCK_RAG_ARN, {...})
   invokePrompt(BEDROCK_RAG_ARN, {
     user_query: "환불 규정 알려주세요",
     retrieved_context: "# 에브리샵 환불 규정\n환불은 7일 이내..."  ← 벡터 검색 결과
@@ -193,9 +200,9 @@ manual_id=4  "교환 규정"        → 벡터 D [0.02, -0.02, ...]
   │ 환불 규정 알려주세요                            │
   └────────────────────────────────────────────────┘
   ↓
-  AI(Claude)가 매뉴얼을 읽고 답변 생성
+  AI(Nova)가 매뉴얼을 읽고 답변 생성
   ↓
-[5단계] composer 노드 → 최종 답변 + 추천 질문 구성
+[5단계] src/bedrock.js composerNode → 최종 답변 + 추천 질문 구성
   ↓
 고객에게 반환:
 {

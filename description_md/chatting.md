@@ -18,7 +18,7 @@
 
 ## 핵심 로직: POST /chats
 
-### 1단계: caseId 결정
+### 1단계: caseId 결정 → `src/routes/chat.js` POST "/" 핸들러 상단
 
 ```
 우선순위: body.caseId > req.session.chatCaseId > 신규 생성
@@ -28,14 +28,14 @@
 - 없으면 세션에서 복원 시도
 - 세션에도 없으면 새 케이스 생성
 
-### 2단계: 종료된 케이스 감지
+### 2단계: 종료된 케이스 감지 → `src/routes/chat.js` 세션 복원 직후
 
 세션에서 복원한 caseId의 status가 `종료` 또는 `AI자동해결`이면:
 - caseId를 null로 초기화
 - 세션에서 chatCaseId 삭제
 - 새 케이스를 생성
 
-### 3단계: 신규 케이스 생성
+### 3단계: 신규 케이스 생성 → `src/routes/chat.js` 케이스 INSERT 부분
 
 ```js
 INSERT INTO cases (store_id, customer_id, status, created_at)
@@ -45,7 +45,7 @@ VALUES ($1, $2, '상담', NOW())
 - `store_id`: body에서 받음 (필수)
 - `customer_id`: 로그인 시 req.user.customer_id, 비로그인 시 NULL
 
-### 4단계: 세션 저장
+### 4단계: 세션 저장 → `src/routes/chat.js` 케이스 생성 직후
 
 ```js
 req.session.chatCaseId = caseId;
@@ -137,7 +137,7 @@ req.session.chatCaseId = caseId;
 
 핵심: **connect.sid 쿠키가 OAuth 리다이렉트를 거쳐도 유지**되기 때문에 가능하다. 쿠키는 도메인 기반이지 URL 기반이 아니다.
 
-### 5단계: 비로그인→로그인 customer_id 연결
+### 5단계: 비로그인→로그인 customer_id 연결 → `src/routes/chat.js` customer_id UPDATE 부분
 
 ```js
 if (req.isAuthenticated() && req.user.customer_id) {
@@ -148,25 +148,32 @@ if (req.isAuthenticated() && req.user.customer_id) {
 
 비로그인 상태에서 시작한 대화가 로그인 후에도 이어지며, 이때 케이스에 고객 ID가 자동 연결된다.
 
-### 6단계: 고객 메시지 저장
+### 6단계: 고객 메시지 저장 → `src/routes/chat.js` messages INSERT (speaker='고객')
 
 ```js
 INSERT INTO messages (case_id, content, speaker, occurred_at)
 VALUES ($1, $2, '고객', NOW())
 ```
 
-### 7단계: AI 호출
+### 7단계: AI 호출 → `src/routes/chat.js` → `src/bedrock.js` processAICC()
 
 ```js
 const result = await processAICC(message, caseId, storeId);
 ```
 
-bedrock.js의 LangGraph 워크플로우 실행:
+bedrock.js의 LangGraph 워크플로우 실행 → `src/bedrock.js` 전체:
 ```
 guardrail + memory (병렬) → supervisor → api 또는 rag → composer
 ```
 
-### 8단계: AI 답변 저장 + 응답
+- guardrail: `src/bedrock.js` guardrailNode — Bedrock Guardrail API 호출
+- memory: `src/bedrock.js` memoryLoaderNode — DB에서 최근 5개 메시지 로드 + 요약
+- supervisor: `src/bedrock.js` supervisorNode — intent 분류 (api/rag)
+- rag: `src/bedrock.js` ragNode → `src/services/searchService.js` findSimilarContext()
+- api: `src/bedrock.js` apiNode → 내부 REST API 호출 (axios)
+- composer: `src/bedrock.js` composerNode — 최종 답변 + 추천 질문 생성
+
+### 8단계: AI 답변 저장 + 응답 → `src/routes/chat.js` messages INSERT (speaker='챗봇')
 
 ```js
 INSERT INTO messages (case_id, content, speaker, occurred_at)
@@ -177,13 +184,13 @@ VALUES ($1, $2, '챗봇', NOW())
 
 ---
 
-## POST /chats/{case_id}/close
+## POST /chats/{case_id}/close → `src/routes/chat.js` POST "/:case_id/close"
 
 ### 동작
 
-1. `UPDATE cases SET status='종료', closed_at=NOW()` (이미 종료면 404)
-2. `delete req.session.chatCaseId` — 다음 채팅은 새 케이스
-3. `setImmediate`로 비동기 AI 분석 실행:
+1. `UPDATE cases SET status='종료', closed_at=NOW()` (이미 종료면 404) → `src/routes/chat.js`
+2. `delete req.session.chatCaseId` — 다음 채팅은 새 케이스 → `src/routes/chat.js`
+3. `setImmediate`로 비동기 AI 분석 실행 → `src/routes/chat.js` → `src/bedrock.js` analyzeCaseConversation():
    - messages 테이블에서 대화 전체 조회
    - `analyzeCaseConversation()` 호출 → 감정(emotion) + 요약(summary) 추출
    - cases 테이블에 emotion, summary 업데이트
@@ -194,14 +201,14 @@ VALUES ($1, $2, '챗봇', NOW())
 
 ---
 
-## POST /chats/{case_id} (상담사용 분석)
+## POST /chats/{case_id} (상담사용 분석) → `src/routes/chat.js` POST "/:case_id"
 
 상담사(OWNER)가 대시보드에서 특정 케이스를 분석할 때 사용.
 
-1. messages에서 해당 case_id의 전체 대화 조회
-2. LLM에 대화 텍스트 전달
+1. messages에서 해당 case_id의 전체 대화 조회 → `src/routes/chat.js`
+2. LLM에 대화 텍스트 전달 → `src/bedrock.js` analyzeCaseConversation()
 3. 결과: `{ emotion, summary, suggested_answer }`
-4. emotion, summary를 cases 테이블에 자동 저장
+4. emotion, summary를 cases 테이블에 자동 저장 → `src/routes/chat.js`
 
 ---
 
@@ -234,13 +241,13 @@ VALUES ($1, $2, '챗봇', NOW())
 
 ---
 
-## 상담사 대화 (에스컬레이션)
+## 상담사 대화 (에스컬레이션) → `src/routes/cases.js` messages 라우트
 
 AI가 해결 못하면 상담사(OWNER)가 개입:
 
 ```
-상담사: GET /cases/42/messages     ← 대화 내역 확인 (polling)
-상담사: POST /cases/42/messages    ← { content, speaker:'상담사' }
+상담사: GET /cases/42/messages     ← src/routes/cases.js GET "/:case_id/messages"
+상담사: POST /cases/42/messages    ← src/routes/cases.js POST "/:case_id/messages" { content, speaker:'상담사' }
 고객:   GET /cases/42/messages     ← 프론트에서 3초 polling → 상담사 답변 표시
 ```
 
@@ -248,9 +255,9 @@ AI가 해결 못하면 상담사(OWNER)가 개입:
 
 ---
 
-## LangGraph 체크포인터 테이블
+## LangGraph 체크포인터 테이블 → `src/bedrock.js` checkpointer + `src/app.js` initializeCheckpointer()
 
-LangGraph가 대화 상태를 유지하기 위해 자동 생성하는 PostgreSQL 테이블들이다. `app.js`에서 서버 시작 시 `checkpointer.setup()`이 호출되면 자동으로 만들어진다.
+LangGraph가 대화 상태를 유지하기 위해 자동 생성하는 PostgreSQL 테이블들이다. `src/app.js`에서 서버 시작 시 `src/bedrock.js`의 `checkpointer.setup()`이 호출되면 자동으로 만들어진다.
 
 | 테이블 | 역할 |
 |--------|------|
