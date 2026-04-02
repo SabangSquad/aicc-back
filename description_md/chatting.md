@@ -3,6 +3,7 @@
 ## 개요
 
 고객이 챗봇과 대화하는 전체 흐름. REST API 기반이며, express-session으로 대화 세션을 유지한다.
+세션 쿠키(connect.sid) maxAge는 **30분**. 브라우저를 닫거나 30분 비활성 시 만료된다.
 
 ---
 
@@ -11,7 +12,7 @@
 | 메서드 | 경로 | 설명 |
 |--------|------|------|
 | POST | `/chats` | 고객 메시지 전송 → AI 응답 수신 |
-| POST | `/chats/{case_id}/close` | 상담 종료 + 세션 초기화 |
+| POST | `/chats/{case_id}/close` | 상담 종료 + 세션 초기화 (AI자동해결 또는 종료) |
 | POST | `/chats/{case_id}` | 상담 분석 (감정/요약/추천답변) — 상담사용 |
 
 ---
@@ -93,7 +94,8 @@ req.session.chatCaseId = caseId;
 |------|-----------|------|
 | 같은 탭에서 계속 대화 | O | 쿠키가 매 요청에 포함됨 |
 | 새 탭 열기 (같은 브라우저) | O | 쿠키는 브라우저 단위로 공유 |
-| 브라우저 닫기 → 다시 열기 | △ | 세션 쿠키가 만료 전이면 유지 |
+| 브라우저 닫기 → 다시 열기 | X | maxAge 30분 — 세션 쿠키 만료 |
+| 30분 이상 비활성 | X | maxAge 초과로 쿠키 만료 |
 | 다른 브라우저/시크릿 모드 | X | 쿠키가 다름 → 새 세션 |
 | 로그인 (Google OAuth) | O | connect.sid 쿠키가 리다이렉트를 거쳐도 유지됨 |
 | POST /chats/:id/close 호출 | X (의도적) | `delete req.session.chatCaseId` |
@@ -161,17 +163,26 @@ VALUES ($1, $2, '고객', NOW())
 const result = await processAICC(message, caseId, storeId);
 ```
 
+호출 전 cases 테이블에서 category 조회 → LangGraph 워크플로우에 전달.
+
 bedrock.js의 LangGraph 워크플로우 실행 → `src/bedrock.js` 전체:
 ```
 guardrail + memory (병렬) → supervisor → api 또는 rag → composer
+                                       → escalate → END
 ```
 
 - guardrail: `src/bedrock.js` guardrailNode — Bedrock Guardrail API 호출
 - memory: `src/bedrock.js` memoryLoaderNode — DB에서 최근 5개 메시지 로드 + 요약
-- supervisor: `src/bedrock.js` supervisorNode — intent 분류 (api/rag)
+- supervisor: `src/bedrock.js` supervisorNode — intent 분류 (api/rag/escalate), category 참조
 - rag: `src/bedrock.js` ragNode → `src/services/searchService.js` findSimilarContext()
 - api: `src/bedrock.js` apiNode → 내부 REST API 호출 (axios)
+- escalate: `src/bedrock.js` escalateNode — cases status → `대기`, 상담사 호출 안내 반환
 - composer: `src/bedrock.js` composerNode — 최종 답변 + 추천 질문 생성
+
+#### escalate 조건 (supervisor가 판단)
+1. 상담 category가 환불/취소/교환/예약취소/예약변경인 경우 (최종 결정권은 사람)
+2. 질문이 위 카테고리에 해당하고 category가 없는 경우
+3. 매뉴얼에 관련 내용이 없어 AI가 해결 불가 판단 시
 
 ### 8단계: AI 답변 저장 + 응답 → `src/routes/chat.js` messages INSERT (speaker='챗봇')
 
@@ -188,9 +199,13 @@ VALUES ($1, $2, '챗봇', NOW())
 
 ### 동작
 
-1. `UPDATE cases SET status='종료', closed_at=NOW()` (이미 종료면 404) → `src/routes/chat.js`
-2. `delete req.session.chatCaseId` — 다음 채팅은 새 케이스 → `src/routes/chat.js`
-3. `setImmediate`로 비동기 AI 분석 실행 → `src/routes/chat.js` → `src/bedrock.js` analyzeCaseConversation():
+1. 종료 전 현재 status 확인 → `src/routes/chat.js`
+2. 상담사 개입 여부에 따라 최종 status 결정:
+   - status가 `대기`였으면 (상담사 호출됨) → `종료`
+   - status가 `상담`이었으면 (AI만 처리) → `AI자동해결`
+3. `UPDATE cases SET status=$1, closed_at=NOW()` → `src/routes/chat.js`
+4. `delete req.session.chatCaseId` — 다음 채팅은 새 케이스 → `src/routes/chat.js`
+5. `setImmediate`로 비동기 AI 분석 실행 → `src/routes/chat.js` → `src/bedrock.js` analyzeCaseConversation():
    - messages 테이블에서 대화 전체 조회
    - `analyzeCaseConversation()` 호출 → 감정(emotion) + 요약(summary) 추출
    - cases 테이블에 emotion, summary 업데이트
@@ -234,8 +249,13 @@ VALUES ($1, $2, '챗봇', NOW())
   │   → customer_id=100 자동 연결
   │   → AI가 고객 정보 기반 답변 가능
   │
+  ├─ [AI가 해결 불가 / 환불·취소·교환 카테고리]
+  │   → escalate: status='대기', 상담사 호출 안내
+  │
   └─ POST /chats/42/close
-      → status='종료', session 초기화
+      → 상담사 개입 없었으면 status='AI자동해결'
+      → 상담사 개입 있었으면 (대기였으면) status='종료'
+      → session 초기화
       → 비동기 AI 분석 (감정/요약)
 ```
 

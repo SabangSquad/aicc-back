@@ -270,18 +270,29 @@ router.post("/:case_id/close", async (req, res) => {
   }
 
   try {
-    const { rows } = await pool.query(
-      `UPDATE cases SET status = '종료', closed_at = NOW()
-       WHERE case_id = $1 AND status <> '종료'
-       RETURNING case_id, status, closed_at`,
+    // 종료 전 현재 status 확인
+    const { rows: beforeRows } = await pool.query(
+      'SELECT status FROM cases WHERE case_id = $1',
       [caseId]
     );
 
-    if (!rows.length) {
+    if (!beforeRows.length || beforeRows[0].status === '종료' || beforeRows[0].status === 'AI자동해결') {
       return res.status(404).json({ ok: false, error: "종료할 상담을 찾을 수 없습니다." });
     }
 
-    // 세션 초기화 — 다음 채팅은 새 케이스
+    const hadCounselor = beforeRows[0].status === '대기';
+
+    // 상담사 개입 없었으면 AI자동해결, 있었으면 종료
+    const finalStatus = hadCounselor ? '종료' : 'AI자동해결';
+
+    const { rows } = await pool.query(
+      `UPDATE cases SET status = $1, closed_at = NOW()
+       WHERE case_id = $2
+       RETURNING case_id, status, closed_at`,
+      [finalStatus, caseId]
+    );
+
+    // 세션 초기화
     if (req.session?.chatCaseId === caseId) {
       delete req.session.chatCaseId;
     }

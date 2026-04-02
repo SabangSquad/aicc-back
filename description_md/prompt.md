@@ -9,15 +9,17 @@
 
 ```
 guardrail + memory (병렬) → supervisor → api 또는 rag → composer → END
+                                       → escalate → END
 ```
 
 | 노드 | ARN 환경변수 | Bedrock 호출 | 역할 |
 |------|-------------|-------------|------|
 | Guardrail | BEDROCK_GUARDRAIL_ARN | Guardrail API | 부적절 입력 차단 |
 | Memory Loader | BEDROCK_MEMORY_LOADER_ARN | invokePrompt | 이전 대화 맥락 요약 |
-| Supervisor | BEDROCK_SUPERVISOR_ARN | invokePrompt | 질문 분류 (api/rag) |
+| Supervisor | BEDROCK_SUPERVISOR_ARN | invokePrompt | 질문 분류 (api/rag/escalate) |
 | API Agent | BEDROCK_API_ARN | invokePrompt (루프) | 내부 API 호출로 데이터 조회 |
 | RAG Agent | BEDROCK_RAG_ARN | invokePrompt | 매뉴얼 기반 답변 생성 |
+| Escalate | 없음 (코드 처리) | 없음 | status→대기, 상담사 호출 안내 |
 | Composer | BEDROCK_COMPOSER_ARN | invokePrompt | 최종 답변 + 추천질문 생성 |
 | Case Writer | BEDROCK_CASE_WRITER_ARN | invokePrompt | 상담 종료 시 감정/요약 분석 |
 
@@ -56,11 +58,12 @@ guardrail + memory (병렬) → supervisor → api 또는 rag → composer → E
 
 ## 2. Supervisor
 
-> 고객 질문을 분류하여 적절한 에이전트(api/rag)로 라우팅한다.
+> 고객 질문을 분류하여 적절한 에이전트(api/rag/escalate)로 라우팅한다.
 
 **입력 변수:**
 - `{{user_input}}` — 고객 질문
 - `{{context}}` — Memory Loader의 맥락 요약
+- `{{category}}` — 현재 상담 카테고리 (없으면 "없음")
 
 **프롬프트:**
 
@@ -75,14 +78,21 @@ guardrail + memory (병렬) → supervisor → api 또는 rag → composer → E
 [고객 질문]
 {{user_input}}
 
+[현재 상담 카테고리]
+{{category}}
+
 분류 기준:
 - "api": 고객 개인 데이터 조회가 필요한 경우 (주문 조회, 배송 상태, 예약 확인, 고객 정보 등)
 - "rag": 가게 정책/규정에 대한 질문인 경우 (환불 규정, 교환 절차, 배송 정책, 예약 규정 등)
+- "escalate": 아래 중 하나에 해당하는 경우
+  1. 현재 상담 카테고리가 "환불", "취소", "교환", "예약취소", "예약변경" 중 하나인 경우 (최종 결정권은 사람에게 있음)
+  2. 고객 질문이 환불/취소/교환/예약취소/예약변경에 해당하고 카테고리가 "없음"인 경우
+  3. 매뉴얼로 해결할 수 없어 상담사 개입이 필요하다고 판단되는 경우
 
 판단이 어려운 경우 "rag"로 분류하세요.
 
 반드시 아래 JSON 형식으로만 응답하세요:
-{"decision": "api"} 또는 {"decision": "rag"}
+{"decision": "api"} 또는 {"decision": "rag"} 또는 {"decision": "escalate"}
 ```
 
 ---

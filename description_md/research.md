@@ -288,6 +288,7 @@ LangGraph 상태 머신 기반 파이프라인 (최적화 완료):
 
 ```
 guardrail + memory (병렬) → supervisor → [API | RAG] → composer → END
+                                       → escalate → END
 ```
 
 이전 버전 대비 변경 사항:
@@ -295,22 +296,24 @@ guardrail + memory (병렬) → supervisor → [API | RAG] → composer → END
 - Verifier 노드 제거 (검증 단계 삭제)
 - Guardrail + Memory 노드 병렬 실행 (순차→병렬)
 - Guardrail: 표준 티어 + 교차 리전 추론(cross-region inference) 적용
+- Escalate 노드 추가 (상담사 호출 — Bedrock 미사용, DB 업데이트만)
 
 | 노드 | 역할 | Bedrock 호출 |
 |------|------|-------------|
 | Guardrail (병렬) | 입력 안전성 검증 (표준 티어, 교차 리전 추론) | Bedrock Guardrail API |
 | Memory (병렬) | 최근 5개 메시지 맥락 요약 | invokePrompt |
-| Supervisor | 질문 분류 (api / rag) | invokePrompt |
+| Supervisor | 질문 분류 (api / rag / escalate), category 참조 | invokePrompt |
 | API Agent | 내부 REST API 자동 호출 (최대 2회) | invokePrompt (루프) |
 | RAG Agent | pgvector 매뉴얼 검색 + LLM 답변 | invokePrompt |
+| Escalate | cases status→대기, 상담사 호출 안내 메시지 반환 | 없음 |
 | Composer | 최종 답변 + 추천 질문 3개 | invokePrompt |
 
-**호출 횟수:** 3~4회 (약 6~10초)
+**호출 횟수:** 3~4회 (escalate 시 2회, 약 6~10초)
 
 ### 상태 채널
 
 ```js
-{ userQuery, caseId, storeId, historySummary, intent, sourceData, retrievedContext, finalAnswer, reason, retryCount }
+{ userQuery, caseId, storeId, category, historySummary, intent, sourceData, retrievedContext, finalAnswer, reason, retryCount }
 ```
 
 ### Case Writer (종료 시 별도)
@@ -400,6 +403,19 @@ const { page, limit, offset } = parsePagination(req.query);
 caseId 우선순위: body > session > 신규 생성
 종료된 케이스 감지: status가 '종료'/'AI자동해결'이면 새 케이스
 비로그인→로그인: customer_id IS NULL인 케이스에 자동 연결
+세션 maxAge: 30분 (브라우저 닫거나 비활성 30분 시 만료)
+```
+
+### 상담 status 전이
+
+```
+상담 (AI 처리 중)
+  → AI 해결 가능: 계속 상담
+  → AI 해결 불가 / 환불·취소·교환 카테고리: 대기 (상담사 호출)
+
+고객이 close 호출
+  → 상담사 개입 없었으면 (대기 없었으면): AI자동해결
+  → 상담사 개입 있었으면 (대기였으면): 종료
 ```
 
 ### 상담사 대화
@@ -441,7 +457,7 @@ WebSocket 없이 REST polling으로 동작.
 | AWS_REGION | AWS 리전 (ap-northeast-2) |
 | BEDROCK_GUARDRAIL_ARN | 입력 검증 가드레일 (표준티어, 교차추론) |
 | BEDROCK_MEMORY_LOADER_ARN | 대화 맥락 요약 프롬프트 |
-| BEDROCK_SUPERVISOR_ARN | 질문 분류 프롬프트 (api/rag) |
+| BEDROCK_SUPERVISOR_ARN | 질문 분류 프롬프트 (api/rag/escalate) |
 | BEDROCK_API_ARN | API 에이전트 프롬프트 |
 | BEDROCK_RAG_ARN | RAG 에이전트 프롬프트 |
 | BEDROCK_COMPOSER_ARN | 최종 답변 생성 프롬프트 |

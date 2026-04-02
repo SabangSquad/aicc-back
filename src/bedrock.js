@@ -67,6 +67,7 @@ const graphState = {
     userQuery: null,
     caseId: null,
     storeId: null,
+    category: null,
     historySummary: null,
     intent: null,
     sourceData: null,
@@ -120,9 +121,10 @@ const memoryLoaderNode = async (state) => {
 // 노드 3: Supervisor
 const supervisorNode = async (state) => {
   console.log(`🎯 [Node 3: Supervisor] 분류 중...`);
-  const raw = await invokePrompt(process.env.BEDROCK_SUPERVISOR_ARN, { 
-    user_input: state.userQuery, 
-    context: state.historySummary 
+  const raw = await invokePrompt(process.env.BEDROCK_SUPERVISOR_ARN, {
+    user_input: state.userQuery,
+    context: state.historySummary,
+    category: state.category || "없음"
   });
   const jsonMatch = raw.match(/\{[\s\S]*\}/);
   let intent = "rag";
@@ -244,6 +246,19 @@ const ragNode = async (state) => {
   };
 };
 
+// 노드 5-2: Escalate (상담사 호출)
+const escalateNode = async (state) => {
+  console.log(`🚨 [Node 5-2: Escalate] 상담사 호출 처리 중...`);
+  await pool.query(
+    "UPDATE cases SET status = '대기' WHERE case_id = $1",
+    [state.caseId]
+  );
+  return {
+    finalAnswer: "죄송합니다. 고객님의 문의는 상담사가 직접 도움을 드려야 할 것 같습니다. 잠시만 기다려 주시면 상담사가 연결됩니다.",
+    suggestedQuestions: []
+  };
+};
+
 // 노드 6: Composer (Verifier 역할 통합)
 const composerNode = async (state) => {
   console.log(`✍️ [Node 8/9: Composer] 답변 및 추천 질문 구성 중...`);
@@ -290,6 +305,7 @@ const workflow = new StateGraph(graphState)
   .addNode("supervisor", supervisorNode)
   .addNode("api", apiNode)
   .addNode("rag", ragNode)
+  .addNode("escalate", escalateNode)
   .addNode("composer", composerNode);
 
 workflow.addEdge(START, "pre");
@@ -298,10 +314,12 @@ workflow.addEdge("pre", "supervisor");
 workflow.addConditionalEdges("supervisor", (state) => state.intent, {
   api: "api",
   rag: "rag",
+  escalate: "escalate",
 });
 
 workflow.addEdge("api", "composer");
 workflow.addEdge("rag", "composer");
+workflow.addEdge("escalate", END);
 workflow.addEdge("composer", END);
 
 const app = workflow.compile({ checkpointer });
@@ -309,8 +327,14 @@ const app = workflow.compile({ checkpointer });
 // AICC 메인 프로세스
 export async function processAICC(userQuery, caseId, storeId) {
   try {
+    const { rows: caseRows } = await pool.query(
+      'SELECT category FROM cases WHERE case_id = $1',
+      [caseId]
+    );
+    const category = caseRows[0]?.category || null;
+
     const config = { configurable: { thread_id: String(caseId) } };
-    const finalState = await app.invoke({ userQuery, caseId, storeId, retryCount: 0 }, config);
+    const finalState = await app.invoke({ userQuery, caseId, storeId, category, retryCount: 0 }, config);
     const response = {
       ok: true,
       answer: finalState.finalAnswer, // 메인 답변
