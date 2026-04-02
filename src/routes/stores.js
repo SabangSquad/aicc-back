@@ -231,7 +231,32 @@ router.route('/:store_id')
  *         schema: { type: string, format: date-time }
  *         description: "조회 종료 시간"
  *     responses:
- *       200: { description: "상담 목록" }
+ *       200:
+ *         description: "상담 목록"
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       case_id: { type: integer }
+ *                       customer_id: { type: integer, nullable: true }
+ *                       store_id: { type: integer }
+ *                       order_id: { type: integer, nullable: true }
+ *                       reservation_id: { type: integer, nullable: true }
+ *                       category: { type: string, nullable: true }
+ *                       status: { type: string, enum: ["대기","상담","종료","AI자동해결"] }
+ *                       emotion: { type: string, nullable: true, enum: ["평온","기쁨","슬픔","화남","짜증"] }
+ *                       summary: { type: string, nullable: true }
+ *                       created_at: { type: string, format: date-time }
+ *                       closed_at: { type: string, format: date-time, nullable: true }
+ *                 total: { type: integer }
+ *                 page: { type: integer }
+ *                 limit: { type: integer }
  */
 router.get('/:store_id/cases', isStoreOwner, async (req, res) => {
   try {
@@ -275,7 +300,7 @@ router.get('/:store_id/cases', isStoreOwner, async (req, res) => {
 
     const { rows } = await pool.query(
       `SELECT case_id, customer_id, store_id, order_id, reservation_id,
-              category, status, emotion, created_at, closed_at
+              category, status, emotion, summary, created_at, closed_at
        FROM cases c WHERE ${conditions.join(' AND ')} ORDER BY c.created_at DESC
        LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
       [...params, limit, offset]
