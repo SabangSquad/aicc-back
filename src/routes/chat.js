@@ -128,14 +128,33 @@ router.post("/", async (req, res) => {
 
     await client.query('BEGIN');
 
-    // 세션 복원된 케이스가 이미 종료됐으면 새로 시작
+    // 세션 복원된 케이스: 종료 상태이거나 30분 비활동이면 자동 종료 → 새로 시작
     if (caseId && !inputCaseId) {
       const { rows: caseCheck } = await client.query(
-        "SELECT status FROM cases WHERE case_id = $1",
+        `SELECT status,
+                (SELECT occurred_at FROM messages WHERE case_id = $1 ORDER BY occurred_at DESC LIMIT 1) AS last_message_at
+         FROM cases WHERE case_id = $1`,
         [caseId]
       );
+
       const closedStatuses = new Set(['종료', 'AI자동해결']);
+      let shouldClose = false;
+
       if (!caseCheck.length || closedStatuses.has(caseCheck[0].status)) {
+        shouldClose = true;
+      } else if (caseCheck[0].last_message_at) {
+        const elapsed = Date.now() - new Date(caseCheck[0].last_message_at).getTime();
+        if (elapsed > 30 * 60 * 1000) { // 30분 초과
+          // 자동 종료 처리
+          await client.query(
+            "UPDATE cases SET status = '종료', closed_at = NOW() WHERE case_id = $1",
+            [caseId]
+          );
+          shouldClose = true;
+        }
+      }
+
+      if (shouldClose) {
         caseId = null;
         if (req.session) delete req.session.chatCaseId;
       }

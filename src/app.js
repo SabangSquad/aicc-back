@@ -96,4 +96,27 @@ app.listen(PORT, async () => {
   } catch (err) {
     console.error('체크포인터 초기화 실패:', err.message);
   }
+
+  // 크론잡: 5분마다 30분 비활동 '상담' 케이스 자동 종료 (대기는 건드리지 않음)
+  setInterval(async () => {
+    try {
+      const { rowCount } = await pool.query(`
+        UPDATE cases SET status = '종료', closed_at = NOW()
+        WHERE status = '상담'
+          AND case_id IN (
+            SELECT c.case_id FROM cases c
+            LEFT JOIN (
+              SELECT case_id, MAX(occurred_at) AS last_at
+              FROM messages GROUP BY case_id
+            ) m ON c.case_id = m.case_id
+            WHERE c.status = '상담'
+              AND (m.last_at < NOW() - INTERVAL '30 minutes'
+                OR (m.last_at IS NULL AND c.created_at < NOW() - INTERVAL '30 minutes'))
+          )
+      `);
+      if (rowCount > 0) console.log(`⏰ [크론잡] ${rowCount}건 상담 자동 종료`);
+    } catch (err) {
+      console.error('크론잡 오류:', err.message);
+    }
+  }, 5 * 60 * 1000);
 });
