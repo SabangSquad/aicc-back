@@ -256,13 +256,36 @@ const ragNode = async (state) => {
   };
 };
 
-// 노드 5-2: Escalate (상담사 호출)
+// 노드 5-2: Escalate (상담사 호출 + AI 요약/추천 답변 생성)
 const escalateNode = async (state) => {
   console.log(`🚨 [Node 5-2: Escalate] 상담사 호출 처리 중...`);
-  await pool.query(
-    "UPDATE cases SET status = '대기' WHERE case_id = $1",
+
+  // 대화 조회 → AI 분석 (요약 + 감정 + 추천 답변)
+  const { rows: msgs } = await pool.query(
+    "SELECT speaker, content FROM messages WHERE case_id = $1 ORDER BY occurred_at ASC",
     [state.caseId]
   );
+
+  let summary = null;
+  let emotion = null;
+
+  if (msgs.length > 0) {
+    try {
+      const text = msgs.map(m => `${m.speaker}: ${m.content}`).join('\n');
+      const analysis = await analyzeCaseConversation(text);
+      summary = analysis.json?.summary ?? null;
+      emotion = analysis.json?.emotion ?? null;
+    } catch (err) {
+      console.error('[Escalate] AI 분석 실패:', err.message);
+    }
+  }
+
+  // summary + emotion + status='대기' 저장
+  await pool.query(
+    "UPDATE cases SET status = '대기', summary = $1, emotion = $2 WHERE case_id = $3",
+    [summary, emotion, state.caseId]
+  );
+
   return {
     finalAnswer: "죄송합니다. 고객님의 문의는 상담사가 직접 도움을 드려야 할 것 같습니다. 잠시만 기다려 주시면 상담사가 연결됩니다.",
     suggestedQuestions: []
