@@ -2,7 +2,34 @@
 
 ## 현재 해야 할 것
 
-### 1. 에스컬레이션 메커니즘
+### 1. SSE 스트리밍 (graph.stream)
+
+LangGraph의 `graph.stream()`을 사용하여 각 노드 진행 상황을 프론트에 실시간 전송.
+
+**변경 파일:**
+- `src/bedrock.js` — `app.invoke()` → `app.stream()` + 노드별 메시지 매핑
+- `src/routes/chat.js` — POST /chats에 SSE 헤더 설정 + 스트림 전송
+
+**노드별 메시지:**
+
+| 노드 | 메시지 |
+|------|--------|
+| pre | 이전 대화를 확인하고 있습니다... |
+| supervisor | 질문의 의도를 파악하는 중입니다... |
+| rag | 관련 규정을 찾는 중입니다... |
+| api | 관련 정보를 찾는 중입니다... |
+| escalate | 상담사에게 연결하는 중입니다... |
+| composer | 답변을 작성하는 중입니다... |
+
+**SSE 응답 형식:**
+```
+data: {"type":"thinking","message":"이전 대화를 확인하고 있습니다..."}
+data: {"type":"complete","ok":true,"answer":"...","suggestions":[...],"caseId":42}
+```
+
+---
+
+### 2. 에스컬레이션 메커니즘
 
 AI가 해결 불가 판단 시 자동으로 상담사(OWNER)에게 넘기는 기능.
 

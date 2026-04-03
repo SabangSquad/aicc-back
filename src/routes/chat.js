@@ -185,8 +185,26 @@ router.post("/", async (req, res) => {
     client.release();
     client = null;
 
-    // Bedrock Prompt Management 프롬프트 호출
-    const result = await processAICC(message, caseId, storeId);
+    // SSE 헤더 설정
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+    });
+
+    // Bedrock 스트리밍 호출 (각 노드 진행 시 SSE로 프론트에 전송)
+    const customerId = req.isAuthenticated?.() ? (req.user?.customer_id ?? null) : null;
+    const result = await processAICC(message, caseId, storeId, customerId, res);
+
+    // 로그인 필요 응답
+    if (result.loginRequired) {
+      res.write(`data: ${JSON.stringify({
+        type: 'login_required',
+        message: result.answer,
+        caseId: caseId,
+      })}\n\n`);
+      return res.end();
+    }
 
     // AI 답변 저장
     await pool.query(
@@ -194,27 +212,35 @@ router.post("/", async (req, res) => {
       [caseId, result.answer]
     );
 
-    return res.json({
+    // 최종 응답 전송
+    res.write(`data: ${JSON.stringify({
+      type: 'answer',
       ok: true,
       answer: result.answer,
       reason: result.reason,
       suggestions: result.suggestions,
       caseId: caseId,
       _links: [{ rel: "self", href: "/chats", method: "POST" }]
-    });
+    })}\n\n`);
+
+    return res.end();
   } catch (err) {
     if (client) {
     try {
-      // 이미 에러로 인해 연결이 끊겼을 수 있으므로 한 번 더 체크
       await client.query('ROLLBACK');
     } catch (rollbackErr) {
       console.error("Rollback failed:", rollbackErr);
     } finally {
-      client.release(); // 에러와 상관없이 반납은 반드시 수행
+      client.release();
     }
   }
     console.error("Bedrock 호출 오류:", err);
 
+    // SSE가 이미 시작됐으면 SSE로 에러 전송, 아니면 JSON
+    if (res.headersSent) {
+      res.write(`data: ${JSON.stringify({ type: 'error', error: err.message ?? String(err) })}\n\n`);
+      return res.end();
+    }
     return res.status(500).json({
       ok: false,
       error: "Bedrock 호출 중 오류가 발생했습니다.",

@@ -67,6 +67,7 @@ const graphState = {
     userQuery: null,
     caseId: null,
     storeId: null,
+    customerId: null,
     category: null,
     historySummary: null,
     intent: null,
@@ -138,7 +139,16 @@ const supervisorNode = async (state) => {
 // 노드 4: API Agent
 const apiNode = async (state) => {
   console.log(`\n🚀 [Node 4: API Agent] 연쇄 호출 시작...`);
-  
+
+  // 비로그인 시 로그인 요청
+  if (!state.customerId) {
+    console.log(`   └─ 🔒 로그인 필요 — customer_id 없음`);
+    return {
+      finalAnswer: "__LOGIN_REQUIRED__",
+      suggestedQuestions: []
+    };
+  }
+
   const apiSpec = await retrieveKB(state.userQuery, state.storeId);
   
   let accumulatedContext = "아직 호출된 API 없음";
@@ -324,8 +334,18 @@ workflow.addEdge("composer", END);
 
 const app = workflow.compile({ checkpointer });
 
-// AICC 메인 프로세스
-export async function processAICC(userQuery, caseId, storeId) {
+// 노드별 프론트 표시 메시지
+const NODE_MESSAGES = {
+  pre:        "이전 대화를 확인하고 있습니다...",
+  supervisor: "질문의 의도를 파악하는 중입니다...",
+  rag:        "관련 규정을 찾는 중입니다...",
+  api:        "관련 정보를 찾는 중입니다...",
+  escalate:   "상담사에게 연결하는 중입니다...",
+  composer:   "답변을 작성하는 중입니다...",
+};
+
+// AICC 메인 프로세스 (SSE 스트리밍)
+export async function processAICC(userQuery, caseId, storeId, customerId, res) {
   try {
     const { rows: caseRows } = await pool.query(
       'SELECT category FROM cases WHERE case_id = $1',
@@ -333,19 +353,57 @@ export async function processAICC(userQuery, caseId, storeId) {
     );
     const category = caseRows[0]?.category || null;
 
+    const startTime = Date.now();
     const config = { configurable: { thread_id: String(caseId) } };
-    const finalState = await app.invoke({ userQuery, caseId, storeId, category, retryCount: 0 }, config);
+
+    const stream = await app.stream(
+      { userQuery, caseId, storeId, customerId, category, retryCount: 0 },
+      config
+    );
+
+    let finalState = {};
+
+    for await (const chunk of stream) {
+      const nodeName = Object.keys(chunk)[0];
+      const stateUpdate = chunk[nodeName];
+
+      // 상태 누적
+      finalState = { ...finalState, ...stateUpdate };
+
+      // SSE로 진행 상황 전송
+      const message = NODE_MESSAGES[nodeName];
+      if (message && res) {
+        res.write(`data: ${JSON.stringify({ type: 'thinking', message })}\n\n`);
+      }
+
+      console.log(`  ✓ [${nodeName}] 완료`);
+    }
+
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    console.log(`\n⏱️ [MAS 전체 추론시간] ${elapsed}초`);
+
+    // 로그인 필요 감지
+    if (finalState.finalAnswer === "__LOGIN_REQUIRED__") {
+      return {
+        ok: true,
+        loginRequired: true,
+        answer: "해당 정보를 조회하려면 로그인이 필요합니다.",
+        suggestions: [],
+        caseId: String(caseId),
+        reason: "로그인 필요"
+      };
+    }
+
     const response = {
       ok: true,
-      answer: finalState.finalAnswer, // 메인 답변
-      suggestions: finalState.suggestedQuestions || [], // AI가 제안하는 다음 질문들
+      answer: finalState.finalAnswer,
+      suggestions: finalState.suggestedQuestions || [],
       caseId: String(caseId),
       reason: "완료"
     };
 
-    // 서버 로그 확인용
     console.log(`\n🎁 [Final Response] 질문 유도형 응답 생성:`);
-    console.log(`   📝 답변 요약: ${response.answer.substring(0, 40)}...`);
+    console.log(`   📝 답변 요약: ${response.answer?.substring(0, 40)}...`);
     console.log(`   💡 추천 질문:`, response.suggestions);
 
     return response;

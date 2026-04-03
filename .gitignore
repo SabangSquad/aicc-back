@@ -25,6 +25,9 @@ docker-data/
 # VSCode
 .vscode/
 
+# Claude
+.claude/
+
 # 더미데이터
 data/
 scripts/

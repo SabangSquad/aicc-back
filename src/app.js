@@ -3,6 +3,8 @@ import dotenv from 'dotenv';
 import session from 'express-session';
 import passport from 'passport';
 import rateLimit from 'express-rate-limit';
+import { RedisStore } from 'connect-redis';
+import { createClient } from 'redis';
 import setupSwagger from './swagger.js';
 
 // 인증 및 미들웨어
@@ -28,8 +30,13 @@ app.set('trust proxy', 1);
 app.use(express.json({ type: ['application/json', 'application/merge-patch+json'] }));
 app.use(express.urlencoded({ extended: true }));
 
-// 1. 세션 설정
+// 1. Redis + 세션 설정
+const redisClient = createClient({ url: process.env.REDIS_URL || 'redis://localhost:6379' });
+redisClient.connect().catch(err => console.error('Redis 연결 실패:', err.message));
+redisClient.on('error', err => console.error('Redis 오류:', err.message));
+
 app.use(session({
+  store: new RedisStore({ client: redisClient }),
   secret: process.env.SESSION_SECRET || 'fallback_secret',
   resave: false,
   saveUninitialized: false,
