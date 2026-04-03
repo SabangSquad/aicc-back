@@ -44,6 +44,6 @@ export const setupPassport = () => {
     }
   ));
 
-  passport.serializeUser((user, done) => done(null, user));
-  passport.deserializeUser((user, done) => done(null, user));
+  passport.serializeUser((user, done) => done(null, user));  // 로그인 -> 세션에 user 저장
+  passport.deserializeUser((user, done) => done(null, user));  // 매 요청 -> 세션에서 꺼내서 req.user에 넣음
 };

@@ -292,6 +292,25 @@ const escalateNode = async (state) => {
   };
 };
 
+// 노드 5-3: Store (가게 정보 조회 — 로그인 불필요)
+const storeNode = async (state) => {
+  console.log(`🏪 [Node 5-3: Store] 가게 정보 조회 중...`);
+  try {
+    const res = await axios({
+      method: 'GET',
+      url: `${process.env.ROOT_URL}/stores/${state.storeId}`,
+      headers: {
+        "x-internal-secret": process.env.INTERNAL_SECRET_KEY,
+        "Content-Type": "application/json"
+      }
+    });
+    return { sourceData: JSON.stringify(res.data) };
+  } catch (err) {
+    console.error('[Store] 가게 정보 조회 실패:', err.message);
+    return { sourceData: "가게 정보를 조회할 수 없습니다." };
+  }
+};
+
 // 노드 6: Composer (Verifier 역할 통합)
 const composerNode = async (state) => {
   console.log(`✍️ [Node 8/9: Composer] 답변 및 추천 질문 구성 중...`);
@@ -339,6 +358,7 @@ const workflow = new StateGraph(graphState)
   .addNode("api", apiNode)
   .addNode("rag", ragNode)
   .addNode("escalate", escalateNode)
+  .addNode("store", storeNode)
   .addNode("composer", composerNode);
 
 workflow.addEdge(START, "pre");
@@ -347,11 +367,16 @@ workflow.addEdge("pre", "supervisor");
 workflow.addConditionalEdges("supervisor", (state) => state.intent, {
   api: "api",
   rag: "rag",
+  store: "store",
   escalate: "escalate",
 });
 
-workflow.addEdge("api", "composer");
+workflow.addConditionalEdges("api", (state) => {
+  if (state.finalAnswer === "__LOGIN_REQUIRED__") return "end";
+  return "composer";
+}, { end: END, composer: "composer" });
 workflow.addEdge("rag", "composer");
+workflow.addEdge("store", "composer");
 workflow.addEdge("escalate", END);
 workflow.addEdge("composer", END);
 
@@ -363,6 +388,7 @@ const NODE_MESSAGES = {
   supervisor: "질문의 의도를 파악하는 중입니다...",
   rag:        "관련 규정을 찾는 중입니다...",
   api:        "관련 정보를 찾는 중입니다...",
+  store:      "가게 정보를 확인하는 중입니다...",
   escalate:   "상담사에게 연결하는 중입니다...",
   composer:   "답변을 작성하는 중입니다...",
 };

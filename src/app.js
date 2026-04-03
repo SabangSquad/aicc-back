@@ -1,11 +1,12 @@
 import express from 'express';
 import dotenv from 'dotenv';
 import session from 'express-session';
-import passport from 'passport';
-import rateLimit from 'express-rate-limit';
-import { RedisStore } from 'connect-redis';
+import passport from 'passport';  // Google 로그인
+import rateLimit from 'express-rate-limit';  // 요청 제한
+import { RedisStore } from 'connect-redis';  // 세션을 Redis에 저장
 import { createClient } from 'redis';
 import setupSwagger from './swagger.js';
+import pool from './db.js';
 
 // 인증 및 미들웨어
 import { setupPassport } from './config/passport.js';
@@ -31,26 +32,27 @@ app.use(express.json({ type: ['application/json', 'application/merge-patch+json'
 app.use(express.urlencoded({ extended: true }));
 
 // 1. Redis + 세션 설정
-const redisClient = createClient({ url: process.env.REDIS_URL || 'redis://localhost:6379' });
+const redisClient = createClient({ url: process.env.REDIS_URL || 'redis://localhost:6379' });  // Redis 연결
 redisClient.connect().catch(err => console.error('Redis 연결 실패:', err.message));
 redisClient.on('error', err => console.error('Redis 오류:', err.message));
 
+// 세션을 Redis에 저장
 app.use(session({
   store: new RedisStore({ client: redisClient }),
   secret: process.env.SESSION_SECRET || 'fallback_secret',
-  resave: false,
-  saveUninitialized: false,
+  resave: false,  // 변경 없으면 세션 재저장 X
+  saveUninitialized: false,  // 빈 세션 저장 X
   cookie: {
     secure: process.env.NODE_ENV === 'production',
     httpOnly: true,
     sameSite: 'lax',
-    maxAge: 30 * 60 * 1000
+    maxAge: 30 * 60 * 1000  // 30분 후 만료
   },
 }));
 
 // 2. Passport 초기화
-app.use(passport.initialize());
-app.use(passport.session());
+app.use(passport.initialize());  // passport 시작
+app.use(passport.session());  // 세션에서 req.user 복원
 setupPassport();
 
 // 3. Swagger
