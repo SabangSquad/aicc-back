@@ -279,7 +279,9 @@ const escalateNode = async (state) => {
     try {
       const text = msgs.map(m => `${m.speaker}: ${m.content}`).join('\n');
       const analysis = await analyzeCaseConversation(text);
+      const suggestedReply = analysis.json?.suggested_reply ?? null;
       summary = analysis.json?.summary ?? null;
+      if (suggestedReply) summary += `\n\n[추천 답변] ${suggestedReply}`;
       emotion = analysis.json?.emotion ?? null;
     } catch (err) {
       console.error('[Escalate] AI 분석 실패:', err.message);
