@@ -12,16 +12,16 @@ guardrail + memory (병렬) → supervisor → api 또는 rag → composer → E
                                        → escalate → END
 ```
 
-| 노드 | ARN 환경변수 | Bedrock 호출 | 역할 |
-|------|-------------|-------------|------|
-| Guardrail | BEDROCK_GUARDRAIL_ARN | Guardrail API | 부적절 입력 차단 |
-| Memory Loader | BEDROCK_MEMORY_LOADER_ARN | invokePrompt | 이전 대화 맥락 요약 |
-| Supervisor | BEDROCK_SUPERVISOR_ARN | invokePrompt | 질문 분류 (api/rag/escalate) |
-| API Agent | BEDROCK_API_ARN | invokePrompt (루프) | 내부 API 호출로 데이터 조회 |
-| RAG Agent | BEDROCK_RAG_ARN | invokePrompt | 매뉴얼 기반 답변 생성 |
-| Escalate | 없음 (코드 처리) | 없음 | status→대기, 상담사 호출 안내 |
-| Composer | BEDROCK_COMPOSER_ARN | invokePrompt | 최종 답변 + 추천질문 생성 |
-| Case Writer | BEDROCK_CASE_WRITER_ARN | invokePrompt | 상담 종료 시 감정/요약 분석 |
+| 노드          | ARN 환경변수              | Bedrock 호출        | 역할                           |
+| ------------- | ------------------------- | ------------------- | ------------------------------ |
+| Guardrail     | BEDROCK_GUARDRAIL_ARN     | Guardrail API       | 부적절 입력 차단               |
+| Memory Loader | BEDROCK_MEMORY_LOADER_ARN | invokePrompt        | 이전 대화 맥락 요약            |
+| Supervisor    | BEDROCK_SUPERVISOR_ARN    | invokePrompt        | 질문 분류 (api/rag/escalate)   |
+| API Agent     | BEDROCK_API_ARN           | invokePrompt (루프) | 내부 API 호출로 데이터 조회    |
+| RAG Agent     | BEDROCK_RAG_ARN           | invokePrompt        | 매뉴얼 기반 답변 생성          |
+| Escalate      | 없음 (코드 처리)          | 없음                | status→대기, 상담사 호출 안내 |
+| Composer      | BEDROCK_COMPOSER_ARN      | invokePrompt        | 최종 답변 + 추천질문 생성      |
+| Case Writer   | BEDROCK_CASE_WRITER_ARN   | invokePrompt        | 상담 종료 시 감정/요약 분석    |
 
 ---
 
@@ -30,6 +30,7 @@ guardrail + memory (병렬) → supervisor → api 또는 rag → composer → E
 > 이전 대화 기록을 요약하여 현재 질문의 맥락을 파악한다.
 
 **입력 변수:**
+
 - `{{past_logs}}` — 최근 5개 메시지 (speaker: content 형태)
 - `{{user_input}}` — 현재 고객 질문
 
@@ -61,6 +62,7 @@ guardrail + memory (병렬) → supervisor → api 또는 rag → composer → E
 > 고객 질문을 분류하여 적절한 에이전트(api/rag/escalate)로 라우팅한다.
 
 **입력 변수:**
+
 - `{{user_input}}` — 고객 질문
 - `{{context}}` — Memory Loader의 맥락 요약
 - `{{category}}` — 현재 상담 카테고리 (없으면 "없음")
@@ -104,7 +106,7 @@ guardrail + memory (병렬) → supervisor → api 또는 rag → composer → E
 판단이 어려운 경우 "rag"로 분류하세요.
 
 반드시 아래 JSON 형식으로만 응답하세요:
-{"decision": "api"} 또는 {"decision": "rag"} 또는 {"decision": "escalate"}
+{"decision": "api"} 또는 {"decision": "rag"} 또는 {"decision": "escalate"} 또는 {"decision": "store"}
 ```
 
 ---
@@ -114,6 +116,7 @@ guardrail + memory (병렬) → supervisor → api 또는 rag → composer → E
 > 내부 REST API를 호출하여 고객 데이터를 조회한다. 최대 2회 반복.
 
 **입력 변수:**
+
 - `{{user_input}}` — 고객 질문
 - `{{case_id}}` — 현재 상담 케이스 ID
 - `{{api_docs}}` — 벡터 검색으로 찾은 관련 매뉴얼 (API 참고용)
@@ -166,6 +169,7 @@ API 호출이 필요한 경우:
 > 벡터 검색으로 찾은 매뉴얼을 참고하여 정책/규정 질문에 답변한다.
 
 **입력 변수:**
+
 - `{{user_query}}` — 고객 질문
 - `{{retrieved_context}}` — pgvector 유사도 검색으로 찾은 매뉴얼 content (top 2)
 
@@ -197,6 +201,7 @@ API 호출이 필요한 경우:
 > (기존 Verifier 역할 포함 — 답변 품질 자체 검증)
 
 **입력 변수:**
+
 - `{{user_input}}` — 고객 질문
 - `{{source_data}}` — API/RAG 에이전트의 결과 데이터
 - `{{history}}` — 이전 대화 맥락 요약
@@ -242,6 +247,7 @@ API 호출이 필요한 경우:
 > 상담 종료 시 전체 대화를 분석하여 감정과 요약을 추출한다.
 
 **입력 변수:**
+
 - `{{conversation_text}}` — 전체 대화 텍스트 (speaker: content 형태)
 
 **프롬프트:**
@@ -277,6 +283,7 @@ Guardrail은 프롬프트가 아닌 **AWS Bedrock Guardrail** 서비스로 관�
 코드에서 Guardrail API를 직접 호출하여 입력을 검사한다.
 
 차단 대상:
+
 - 욕설/비속어
 - 개인정보 (주민번호, 카드번호 등)
 - 서비스와 무관한 요청 (코드 작성, 번역 등)
@@ -288,6 +295,7 @@ Guardrail은 프롬프트가 아닌 **AWS Bedrock Guardrail** 서비스로 관�
 > 최근 N시간의 상담 요약을 분석하여 트렌드와 솔루션을 제공한다.
 
 **입력 변수:**
+
 - `{{stats}}` — 코드가 계산한 정확한 통계 (총 건수, 카테고리별/감정별 건수)
 - `{{summary_data}}` — 최근 상담 요약 목록 (카테고리 | 감정 | 요약 형태)
 

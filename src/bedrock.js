@@ -132,6 +132,12 @@ const supervisorNode = async (state) => {
   if (jsonMatch) {
     try { intent = JSON.parse(jsonMatch[0]).decision || "rag"; } catch (e) { console.error("JSON 파싱 실패"); }
   }
+  // 유효하지 않은 intent는 rag로 기본 처리
+  const validIntents = new Set(['api', 'rag', 'store', 'escalate']);
+  if (!validIntents.has(intent)) {
+    console.log(`   └─ ⚠️ 알 수 없는 intent "${intent}" → rag로 처리`);
+    intent = "rag";
+  }
   console.log(`   └─ ✅ 최종 결정: [${intent.toUpperCase()}]`);
   return { intent };
 };
