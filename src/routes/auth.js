@@ -30,14 +30,15 @@ router.get('/google/callback', (req, res, next) => {
 // 인증 상태 확인
 router.get('/status', (req, res) => {
   if (req.isAuthenticated() && req.user) {
-    return res.json({ 
-      isAuthenticated: true, 
+    return res.json({
+      isAuthenticated: true,
       user: {
-        id: req.user.id,
+        store_id: req.user.store_id,
+        customer_id: req.user.customer_id,
         email: req.user.email,
         role: req.user.role,
         name: req.user.name
-      } 
+      }
     });
   }
   res.status(401).json({ isAuthenticated: false });
