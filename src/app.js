@@ -62,15 +62,13 @@ setupSwagger(app);
 // 4. 공개 라우터
 app.use('/auth', authRouter);
 
-// 5. 챗봇 — isAuthorized 앞 (비로그인 허용) + Rate Limiting
+// 5. 공개 라우터 — isAuthorized 앞 (비로그인 허용)
 const chatLimiter = rateLimit({ windowMs: 60000, max: 10, message: { error: '요청이 너무 많습니다. 1분 후 다시 시도해주세요.' } });
 app.use('/chats', chatLimiter, chatRouter);
+app.use('/stores', storesRouter);  // GET /stores/:store_id는 공개, 나머지는 내부 isStoreOwner/isAdmin으로 보호
 
 // 6. 권한 적용
 app.use(isAuthorized);
-
-// 7. 모든 라우터 등록
-app.use('/stores',       storesRouter);
 app.use('/cases',        casesRouter);
 app.use('/customers',    customersRouter);
 app.use('/manuals',      manualsRouter);

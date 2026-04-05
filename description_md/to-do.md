@@ -1,8 +1,75 @@
 # To-Do
 
-## 현재 해야 할 것
+## 현재 해야 할 것 (프론트 연동 이슈)
 
-### 1. SSE 스트리밍 (graph.stream)
+### 1. GET /stores/:store_id 공개 접근 허용
+
+**문제:** 채팅 페이지에서 가게 정보(이름, 영업시간 등)를 표시하려는데, `isAuthorized` 뒤에 있어서 비로그인 시 401.
+
+**해결:** `/chats`처럼 `isAuthorized` 앞으로 이동하거나, 해당 GET 엔드포인트만 공개 처리.
+
+**변경 파일:** `src/app.js` 또는 `src/routes/stores.js`
+
+---
+
+### 2. 로그인 후 해당 계정의 업장 정보 가져오기
+
+**문제:** OWNER로 로그인 후 "내 가게 정보"를 가져오려면 store_id를 알아야 하는데, 프론트에서 어떻게 아는가?
+
+**해결:** `GET /auth/status` 응답에 이미 `store_id`가 포함되어 있음.
+```json
+// OWNER 로그인 시 /auth/status 응답
+{ "isAuthenticated": true, "user": { "store_id": 1, "role": "OWNER", ... } }
+```
+프론트에서 `/auth/status` → `user.store_id` 꺼내서 → `/stores/${store_id}` 호출하면 됨.
+
+**확인:** auth.js의 status 응답에 store_id가 빠져있으면 추가 필요.
+
+---
+
+### 3. AI Solution 응답이 JSON 파싱 실패 (5번 중 1번만 성공)
+
+**문제:** `GET /stores/:id/solutions`의 `ai_analysis`가 가끔 JSON이 아닌 raw 텍스트로 옴.
+```json
+// 실패 시
+"ai_analysis": { "raw": "{\n  \"headline\": \"...\",\n ..." }
+
+// 성공 시
+"ai_analysis": { "headline": "...", "issues": [...], "strategies": [...] }
+```
+
+**원인:** LLM이 가끔 불완전한 JSON을 반환 → `JSON.parse` 실패 → raw로 폴백.
+
+**해결 방법:**
+1. analyzeSolutions()에서 JSON 파싱 재시도 (정규식으로 JSON 추출 강화)
+2. 프롬프트에 "반드시 완전한 JSON만 출력하세요. 설명 텍스트 없이 JSON만." 강조
+3. 파싱 실패 시 LLM 재호출 (1회)
+
+**변경 파일:** `src/bedrock.js` analyzeSolutions()
+
+---
+
+### 4. 예약 질문 시 escalate로 빠지는 문제
+
+**문제:** "예약하고 싶어요"가 escalate로 분류됨. 예약 자체는 프론트에서 폼으로 처리해야 하는데 상담사 연결로 가버림.
+
+**현재 Supervisor 분류:**
+- "예약해주세요" → escalate (처리 요청이니까)
+
+**기대 동작:** 예약은 프론트에서 시간/인원 선택 폼을 보여주고 `POST /reservations`로 직접 생성. 챗봇이 "예약 폼을 열어드릴게요"라고 안내만 하면 됨.
+
+**해결 방법:**
+1. Supervisor에 `"reservation"` 분류 추가 — 예약 의도 감지
+2. 또는 Composer 프롬프트에서 예약 요청 시 "예약 폼을 이용해주세요" 안내
+3. SSE 응답에 `type: "reservation_form"` 추가 → 프론트가 폼 표시
+
+**변경 파일:** `src/bedrock.js`, `description_md/prompt.md`
+
+---
+
+### 5. 이전 해야 할 것
+
+#### 5-1. 에스컬레이션 메커니즘
 
 LangGraph의 `graph.stream()`을 사용하여 각 노드 진행 상황을 프론트에 실시간 전송.
 
