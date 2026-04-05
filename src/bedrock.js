@@ -132,6 +132,12 @@ const supervisorNode = async (state) => {
   if (jsonMatch) {
     try { intent = JSON.parse(jsonMatch[0]).decision || "rag"; } catch (e) { console.error("JSON 파싱 실패"); }
   }
+  // 예약 요청이면 바로 END (별도 노드 불필요)
+  if (intent === 'reservation') {
+    console.log(`   └─ ✅ 최종 결정: [RESERVATION] → 예약 폼 안내`);
+    return { intent, finalAnswer: "__RESERVATION__", suggestedQuestions: [] };
+  }
+
   // 유효하지 않은 intent는 rag로 기본 처리
   const validIntents = new Set(['api', 'rag', 'store', 'escalate']);
   if (!validIntents.has(intent)) {
@@ -300,6 +306,7 @@ const escalateNode = async (state) => {
   };
 };
 
+
 // 노드 5-3: Store (가게 정보 조회 — 로그인 불필요)
 const storeNode = async (state) => {
   console.log(`🏪 [Node 5-3: Store] 가게 정보 조회 중...`);
@@ -438,6 +445,18 @@ export async function processAICC(userQuery, caseId, storeId, customerId, res) {
 
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
     console.log(`\n⏱️ [MAS 전체 추론시간] ${elapsed}초`);
+
+    // 예약 폼 감지
+    if (finalState.finalAnswer === "__RESERVATION__") {
+      return {
+        ok: true,
+        reservation: true,
+        answer: "예약 폼을 열어드릴게요.",
+        suggestions: [],
+        caseId: String(caseId),
+        reason: "예약"
+      };
+    }
 
     // 로그인 필요 감지
     if (finalState.finalAnswer === "__LOGIN_REQUIRED__") {
