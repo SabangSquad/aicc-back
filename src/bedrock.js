@@ -484,14 +484,25 @@ export async function analyzeCaseConversation(conversationText) {
 
 // 상담 솔루션 분석 — 숫자는 코드가 계산, AI는 해석+솔루션만
 export async function analyzeSolutions(statsText, summaryText) {
-  const res = await invokePrompt(process.env.BEDROCK_SOLUTION_ANALYZER_ARN, {
-    stats: statsText,
-    summary_data: summaryText
-  });
-  try {
-    const json = JSON.parse(res.match(/\{[\s\S]*\}/)?.[0] || 'null');
-    return json || { raw: res };
-  } catch (e) { return { raw: res }; }
+  const params = { stats: statsText, summary_data: summaryText };
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const res = await invokePrompt(process.env.BEDROCK_SOLUTION_ANALYZER_ARN, params);
+    try {
+      // JSON 블록 추출 (```json ... ``` 또는 { ... } 패턴)
+      const cleaned = res.replace(/```json\s*/g, '').replace(/```\s*/g, '');
+      const match = cleaned.match(/\{[\s\S]*\}/);
+      if (!match) throw new Error('JSON not found');
+
+      const json = JSON.parse(match[0]);
+      if (json.headline && json.issues && json.strategies) return json;
+      throw new Error('Incomplete JSON');
+    } catch (e) {
+      console.error(`[Solutions] JSON 파싱 실패 (시도 ${attempt + 1}/2):`, e.message);
+      if (attempt === 0) continue; // 1회 재시도
+      return { raw: res };
+    }
+  }
 }
 
 // 체크포인터 초기화
