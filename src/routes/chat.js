@@ -131,7 +131,7 @@ router.post("/", async (req, res) => {
     // 세션 복원된 케이스: 종료 상태이거나 30분 비활동이면 자동 종료 → 새로 시작
     if (caseId && !inputCaseId) {
       const { rows: caseCheck } = await client.query(
-        `SELECT status,
+        `SELECT status, store_id,
                 (SELECT occurred_at FROM messages WHERE case_id = $1 ORDER BY occurred_at DESC LIMIT 1) AS last_message_at
          FROM cases WHERE case_id = $1`,
         [caseId]
@@ -141,6 +141,13 @@ router.post("/", async (req, res) => {
       let shouldClose = false;
 
       if (!caseCheck.length || closedStatuses.has(caseCheck[0].status)) {
+        shouldClose = true;
+      } else if (inputStoreId && caseCheck[0].store_id !== inputStoreId) {
+        // 다른 가게로 채팅 시작 → 이전 케이스 종료
+        await client.query(
+          "UPDATE cases SET status = '종료', closed_at = NOW() WHERE case_id = $1",
+          [caseId]
+        );
         shouldClose = true;
       } else if (caseCheck[0].last_message_at) {
         const elapsed = Date.now() - new Date(caseCheck[0].last_message_at).getTime();
