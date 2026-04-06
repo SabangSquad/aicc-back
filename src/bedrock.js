@@ -134,13 +134,7 @@ const supervisorNode = async (state) => {
   if (jsonMatch) {
     try { intent = JSON.parse(jsonMatch[0]).decision || "rag"; } catch (e) { console.error("JSON 파싱 실패"); }
   }
-  // 예약 요청이면 바로 END (별도 노드 불필요)
-  if (intent === 'reservation') {
-    console.log(`   └─ ✅ 최종 결정: [RESERVATION] → 예약 폼 안내`);
-    return { intent, finalAnswer: "__RESERVATION__", suggestedQuestions: [] };
-  }
-
-  // 업종별 제약 체크 — 해당 업종에 없는 기능이면 바로 안내 메시지
+  // 업종별 제약 체크 (reservation보다 먼저 — 업종에 없는 키워드면 바로 차단)
   const sc = state.storeCategory;
   const q = state.userQuery;
   if (sc) {
@@ -160,6 +154,43 @@ const supervisorNode = async (state) => {
     if (sc === '식당') {
       if (q.match(/환불|교환|주문\s*취소|배송/)) return unsupported('식당에 환불/교환/취소/배송 요청');
       if (q.match(/진료|과목/)) return unsupported('식당에 진료과목 요청');
+    }
+  }
+
+  // "예약" 키워드 처리
+  if (q.match(/예약/) && intent !== 'rag') {
+    if (q.match(/내\s*예약|예약\s*확인|예약\s*조회/)) {
+      intent = 'api';
+    } else if (q.match(/언제|가능|비어|빈|되나|될까|몇시|시간|월|화|수|목|금|토|일|내일|모레|이번\s*주|\d+월|\d+일/)) {
+      intent = 'store';
+    } else {
+      intent = 'reservation';
+    }
+  }
+
+  // 예약 요청이면 로그인 체크 후 END
+  if (intent === 'reservation') {
+    if (!state.customerId) {
+      console.log(`   └─ 🔒 예약하려면 로그인 필요`);
+      return { intent: 'reservation', finalAnswer: "__LOGIN_REQUIRED__", suggestedQuestions: [] };
+    }
+    console.log(`   └─ ✅ 최종 결정: [RESERVATION] → 예약 폼 안내`);
+    return { intent, finalAnswer: "__RESERVATION__", suggestedQuestions: [] };
+  }
+
+  // rag로 분류됐지만 규정/정책 질문이 아니면 store로 전환
+  // 단, 인사/단순 응답은 rag 유지 (Composer가 자연스럽게 답변)
+  if (sc && intent === 'rag') {
+    const isGreeting = q.match(/^(안녕|반갑|감사|고마워|네|아니|알겠|ㅎㅇ|ㅋ|ㅎ|응|넵|좋아|오케이|ok|hi|hello)/i);
+    if (isGreeting) {
+      console.log(`   └─ 👋 인사/단순 응답 → composer로 직접 전달`);
+      return { intent: 'greeting', sourceData: '고객이 인사 또는 단순 응답을 했습니다. 친절하게 인사하고 무엇을 도와드릴지 물어보세요.' };
+    }
+    const isActionRequest = q.match(/싶|할게|해주|해줘|하고|잡아|변경|취소/);
+    const isPolicyQuestion = q.match(/규정|정책|절차|방법|어떻게|며칠|기간|이내|이후|가능|불가/);
+    if (!isActionRequest && !isPolicyQuestion) {
+      console.log(`   └─ 🔄 일반 정보 질문 → rag에서 store로 전환`);
+      intent = "store";
     }
   }
 
@@ -332,19 +363,147 @@ const escalateNode = async (state) => {
 };
 
 
+// 고객 질문에서 날짜 범위 추출
+function extractDateRange(query) {
+  const today = new Date();
+
+  if (query.match(/내일/)) {
+    const d = new Date(today); d.setDate(d.getDate() + 1);
+    const end = new Date(d); end.setHours(23, 59, 59);
+    d.setHours(0, 0, 0);
+    return { start: d, end, label: '내일' };
+  }
+  if (query.match(/모레/)) {
+    const d = new Date(today); d.setDate(d.getDate() + 2);
+    const end = new Date(d); end.setHours(23, 59, 59);
+    d.setHours(0, 0, 0);
+    return { start: d, end, label: '모레' };
+  }
+  if (query.match(/이번\s*주/)) {
+    const start = new Date(today); start.setHours(0, 0, 0);
+    const end = new Date(today); end.setDate(end.getDate() + (7 - end.getDay())); end.setHours(23, 59, 59);
+    return { start, end, label: '이번 주' };
+  }
+  // "3월 26일" 패턴
+  const dateMatch = query.match(/(\d{1,2})월\s*(\d{1,2})일/);
+  if (dateMatch) {
+    const d = new Date(today.getFullYear(), parseInt(dateMatch[1]) - 1, parseInt(dateMatch[2]));
+    const end = new Date(d); end.setHours(23, 59, 59);
+    d.setHours(0, 0, 0);
+    return { start: d, end, label: `${dateMatch[1]}월 ${dateMatch[2]}일` };
+  }
+  // 요일 패턴
+  const dayMap = { '월': 1, '화': 2, '수': 3, '목': 4, '금': 5, '토': 6, '일': 0 };
+  const dayMatch = query.match(/(월|화|수|목|금|토|일)요일/);
+  if (dayMatch) {
+    const target = dayMap[dayMatch[1]];
+    const d = new Date(today);
+    const diff = (target - d.getDay() + 7) % 7 || 7;
+    d.setDate(d.getDate() + diff);
+    const end = new Date(d); end.setHours(23, 59, 59);
+    d.setHours(0, 0, 0);
+    return { start: d, end, label: `${dayMatch[1]}요일` };
+  }
+  // 기본: 오늘~7일 후
+  const start = new Date(today); start.setHours(0, 0, 0);
+  const end = new Date(today); end.setDate(end.getDate() + 7); end.setHours(23, 59, 59);
+  return { start, end, label: '이번 주' };
+}
+
 // 노드 5-3: Store (가게 정보 조회 — 로그인 불필요)
+const DAY_NAMES = { mon: '월', tue: '화', wed: '수', thu: '목', fri: '금', sat: '토', sun: '일' };
+
+function formatStoreInfo(data) {
+  const lines = [];
+  lines.push(`가게명: ${data.name}`);
+  lines.push(`업종: ${data.category}`);
+  lines.push(`주소: ${data.address}`);
+  lines.push(`전화: ${data.phone}`);
+
+  if (data.business_hours) {
+    const bh = typeof data.business_hours === 'string' ? JSON.parse(data.business_hours) : data.business_hours;
+    const hours = Object.entries(bh)
+      .map(([day, time]) => `${DAY_NAMES[day] || day}: ${time === 'off' ? '휴무' : time}`)
+      .join(', ');
+    lines.push(`영업시간: ${hours}`);
+  }
+
+  if (data.facilities) {
+    const fac = typeof data.facilities === 'string' ? JSON.parse(data.facilities) : data.facilities;
+    const items = Object.entries(fac).map(([k, v]) => `${k}: ${v ? 'O' : 'X'}`).join(', ');
+    lines.push(`편의시설: ${items}`);
+  }
+
+  if (data.notice) lines.push(`공지: ${data.notice}`);
+
+  if (data.store_items) {
+    const si = typeof data.store_items === 'string' ? JSON.parse(data.store_items) : data.store_items;
+    if (si.menu) {
+      const menu = si.menu.map(m => `${m.name} ${m.price}원${m.description ? ` (${m.description})` : ''}`).join(', ');
+      lines.push(`메뉴: ${menu}`);
+    }
+    if (si.department) {
+      lines.push(`진료과목: ${si.department.join(', ')}`);
+    }
+  }
+
+  return lines.join('\n');
+}
+
 const storeNode = async (state) => {
   console.log(`🏪 [Node 5-3: Store] 가게 정보 조회 중...`);
   try {
-    const res = await axios({
-      method: 'GET',
-      url: `${process.env.ROOT_URL}/stores/${state.storeId}`,
-      headers: {
-        "x-internal-secret": process.env.INTERNAL_SECRET_KEY,
-        "Content-Type": "application/json"
+    const headers = { "x-internal-secret": process.env.INTERNAL_SECRET_KEY, "Content-Type": "application/json" };
+
+    const storeRes = await axios({ method: 'GET', url: `${process.env.ROOT_URL}/stores/${state.storeId}`, headers });
+    let info = formatStoreInfo(storeRes.data);
+
+    // 상품 관련 질문이면 상품 목록도 조회
+    if (state.userQuery.match(/상품|뭐 팔|뭐파|어떤 거|판매/)) {
+      try {
+        const prodRes = await axios({ method: 'GET', url: `${process.env.ROOT_URL}/stores/${state.storeId}/products`, headers });
+        const products = prodRes.data?.data || [];
+        if (products.length > 0) {
+          const list = products.map(p => `${p.name} ${p.price.toLocaleString()}원`).join(', ');
+          info += `\n상품 목록: ${list}`;
+        } else {
+          info += `\n상품 목록: 등록된 상품이 없습니다.`;
+        }
+      } catch (e) {
+        console.error('[Store] 상품 목록 조회 실패:', e.message);
       }
-    });
-    return { sourceData: JSON.stringify(res.data) };
+    }
+
+    // 예약 관련 질문이면 해당 기간 예약 현황 조회
+    if (state.userQuery.match(/예약|언제|가능|빈|비어/)) {
+      try {
+        const { start, end, label } = extractDateRange(state.userQuery);
+        const startStr = start.toISOString();
+        const endStr = end.toISOString();
+        const reservRes = await axios({
+          method: 'GET',
+          url: `${process.env.ROOT_URL}/stores/${state.storeId}/reservations?start=${startStr}&end=${endStr}`,
+          headers
+        });
+        const reservations = (reservRes.data?.data || []).filter(r => r.status === '완료');
+        if (reservations.length > 0) {
+          const booked = reservations.map(r => {
+            const d = new Date(r.reserved_at);
+            const date = d.toLocaleDateString('ko-KR', { month: 'long', day: 'numeric', weekday: 'short' });
+            const time = d.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
+            return `${date} ${time} (${r.headcount || '?'}명)`;
+          }).join('\n  ');
+          info += `\n${label} 예약된 시간:\n  ${booked}`;
+        } else {
+          info += `\n${label} 예약된 시간: 없음 (전 시간 가능)`;
+        }
+        info += `\n(고객에게 영업시간과 예약 현황을 비교하여 가능한 시간을 안내해주세요)`;
+      } catch (e) {
+        console.error('[Store] 예약 현황 조회 실패:', e.message);
+      }
+    }
+
+    return { sourceData: info };
   } catch (err) {
     console.error('[Store] 가게 정보 조회 실패:', err.message);
     return { sourceData: "가게 정보를 조회할 수 없습니다." };
@@ -406,12 +565,14 @@ workflow.addEdge("pre", "supervisor");
 
 workflow.addConditionalEdges("supervisor", (state) => {
   if (state.intent === 'reservation' || state.intent === 'unsupported') return 'end';
+  if (state.intent === 'greeting') return 'composer';
   return state.intent;
 }, {
   api: "api",
   rag: "rag",
   store: "store",
   escalate: "escalate",
+  composer: "composer",
   end: END,
 });
 
@@ -515,6 +676,7 @@ export async function processAICC(userQuery, caseId, storeId, customerId, res) {
       rag:         "매뉴얼 기반 답변",
       api:         "데이터 조회 기반 답변",
       store:       "가게 정보 조회",
+      greeting:    "인사",
       escalate:    "상담사 연결",
       reservation: "예약 폼 안내",
     };

@@ -227,6 +227,7 @@ router.post("/", async (req, res) => {
       res.write(`data: ${JSON.stringify({
         type: 'reservation',
         message: result.answer,
+        reason: result.reason,
         caseId: caseId,
       })}\n\n`);
       return res.end();
@@ -237,6 +238,7 @@ router.post("/", async (req, res) => {
       res.write(`data: ${JSON.stringify({
         type: 'login_required',
         message: result.answer,
+        reason: result.reason,
         caseId: caseId,
       })}\n\n`);
       return res.end();
