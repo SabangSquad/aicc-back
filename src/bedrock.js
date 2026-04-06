@@ -140,6 +140,29 @@ const supervisorNode = async (state) => {
     return { intent, finalAnswer: "__RESERVATION__", suggestedQuestions: [] };
   }
 
+  // 업종별 제약 체크 — 해당 업종에 없는 기능이면 바로 안내 메시지
+  const sc = state.storeCategory;
+  const q = state.userQuery;
+  if (sc) {
+    const unsupported = (msg) => {
+      console.log(`   └─ ⚠️ ${msg}`);
+      return { intent: 'unsupported', finalAnswer: "__UNSUPPORTED__", suggestedQuestions: [] };
+    };
+
+    if (sc === '이커머스') {
+      if (q.match(/예약/)) return unsupported('이커머스에 예약 요청');
+      if (q.match(/진료|과목|메뉴/)) return unsupported('이커머스에 진료과목/메뉴 요청');
+    }
+    if (sc === '병원') {
+      if (q.match(/환불|교환|주문\s*취소|배송/)) return unsupported('병원에 환불/교환/취소/배송 요청');
+      if (q.match(/메뉴|가격/)) return unsupported('병원에 메뉴/가격 요청');
+    }
+    if (sc === '식당') {
+      if (q.match(/환불|교환|주문\s*취소|배송/)) return unsupported('식당에 환불/교환/취소/배송 요청');
+      if (q.match(/진료|과목/)) return unsupported('식당에 진료과목 요청');
+    }
+  }
+
   // 유효하지 않은 intent는 rag로 기본 처리
   const validIntents = new Set(['api', 'rag', 'store', 'escalate']);
   if (!validIntents.has(intent)) {
@@ -382,7 +405,7 @@ workflow.addEdge(START, "pre");
 workflow.addEdge("pre", "supervisor");
 
 workflow.addConditionalEdges("supervisor", (state) => {
-  if (state.intent === 'reservation') return 'end';
+  if (state.intent === 'reservation' || state.intent === 'unsupported') return 'end';
   return state.intent;
 }, {
   api: "api",
@@ -452,6 +475,17 @@ export async function processAICC(userQuery, caseId, storeId, customerId, res) {
 
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
     console.log(`\n⏱️ [MAS 전체 추론시간] ${elapsed}초`);
+
+    // 미지원 기능 감지
+    if (finalState.finalAnswer === "__UNSUPPORTED__") {
+      return {
+        ok: true,
+        answer: "죄송합니다. 해당 서비스는 이 가게에서 지원하지 않습니다.",
+        suggestions: [],
+        caseId: String(caseId),
+        reason: "미지원 기능"
+      };
+    }
 
     // 예약 폼 감지
     if (finalState.finalAnswer === "__RESERVATION__") {
