@@ -144,24 +144,53 @@ router.post("/", async (req, res) => {
         shouldClose = true;
       } else if (inputStoreId && caseCheck[0].store_id !== inputStoreId) {
         // 다른 가게로 채팅 시작 → 이전 케이스 종료
+        const { rows: agentCheck } = await client.query(
+          "SELECT 1 FROM messages WHERE case_id = $1 AND speaker = '상담사' LIMIT 1", [caseId]
+        );
+        const autoStatus = agentCheck.length > 0 ? '종료' : 'AI자동해결';
         await client.query(
-          "UPDATE cases SET status = '종료', closed_at = NOW() WHERE case_id = $1",
-          [caseId]
+          `UPDATE cases SET status = $1, closed_at = NOW() WHERE case_id = $2`,
+          [autoStatus, caseId]
         );
         shouldClose = true;
       } else if (caseCheck[0].last_message_at) {
         const elapsed = Date.now() - new Date(caseCheck[0].last_message_at).getTime();
         if (elapsed > 30 * 60 * 1000) { // 30분 초과
-          // 자동 종료 처리
+          // 상담사 개입 있었으면 '종료', 없었으면 'AI자동해결'
+          const { rows: agentCheck } = await client.query(
+            "SELECT 1 FROM messages WHERE case_id = $1 AND speaker = '상담사' LIMIT 1", [caseId]
+          );
+          const autoStatus = agentCheck.length > 0 ? '종료' : 'AI자동해결';
           await client.query(
-            "UPDATE cases SET status = '종료', closed_at = NOW() WHERE case_id = $1",
-            [caseId]
+            `UPDATE cases SET status = $1, closed_at = NOW() WHERE case_id = $2`,
+            [autoStatus, caseId]
           );
           shouldClose = true;
         }
       }
 
       if (shouldClose) {
+        // 비동기 AI 분석 (자동 종료된 케이스)
+        const closedCaseId = caseId;
+        setImmediate(async () => {
+          try {
+            const { rows: msgs } = await pool.query(
+              'SELECT speaker, content FROM messages WHERE case_id = $1 ORDER BY occurred_at ASC',
+              [closedCaseId]
+            );
+            if (!msgs.length) return;
+            const { analyzeCaseConversation } = await import('../bedrock.js');
+            const text = msgs.map(m => `${m.speaker}: ${m.content}`).join('\n');
+            const analysis = await analyzeCaseConversation(text);
+            await pool.query(
+              'UPDATE cases SET emotion = $1, summary = $2 WHERE case_id = $3',
+              [analysis.json?.emotion ?? null, analysis.json?.summary ?? null, closedCaseId]
+            );
+          } catch (err) {
+            console.error(`[자동종료 분석] 케이스 ${closedCaseId} 실패:`, err.message);
+          }
+        });
+
         caseId = null;
         if (req.session) delete req.session.chatCaseId;
       }
@@ -334,10 +363,11 @@ router.post("/:case_id/close", async (req, res) => {
       return res.status(404).json({ ok: false, error: "종료할 상담을 찾을 수 없습니다." });
     }
 
-    const hadCounselor = beforeRows[0].status === '대기';
-
-    // 상담사 개입 없었으면 AI자동해결, 있었으면 종료
-    const finalStatus = hadCounselor ? '종료' : 'AI자동해결';
+    // 상담사가 개입했는지 확인 (messages에 speaker='상담사' 존재 여부)
+    const { rows: agentCheck } = await pool.query(
+      "SELECT 1 FROM messages WHERE case_id = $1 AND speaker = '상담사' LIMIT 1", [caseId]
+    );
+    const finalStatus = agentCheck.length > 0 ? '종료' : 'AI자동해결';
 
     const { rows } = await pool.query(
       `UPDATE cases SET status = $1, closed_at = NOW()

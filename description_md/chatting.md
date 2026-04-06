@@ -267,9 +267,10 @@ VALUES ($1, $2, '챗봇', NOW())
   ├─ [AI가 해결 불가 / 환불·취소·교환 카테고리]
   │   → escalate: status='대기', 상담사 호출 안내
   │
-  └─ POST /chats/42/close
-      → 상담사 개입 없었으면 status='AI자동해결'
-      → 상담사 개입 있었으면 (대기였으면) status='종료'
+  └─ POST /chats/42/close (또는 30분 비활동 시 크론잡/세션 복원에서 자동 종료)
+      → messages에 speaker='상담사' 있나?
+        → 없음 → status='AI자동해결'
+        → 있음 → status='종료'
       → session 초기화
       → 비동기 AI 분석 (감정/요약)
 ```
@@ -287,6 +288,24 @@ AI가 해결 못하면 상담사(OWNER)가 개입:
 ```
 
 별도 WebSocket 없이 REST polling으로 동작.
+
+---
+
+## 종료 방식 정리
+
+| 종료 방식 | 트리거 | 상담사 없음 | 상담사 있음 | AI 분석 | 파일 |
+|----------|--------|-----------|-----------|---------|------|
+| 고객이 종료 클릭 | `POST /chats/:id/close` | AI자동해결 | 종료 | ✓ | `src/routes/chat.js` |
+| 30분 비활동 (크론잡) | `setInterval` 5분마다 체크 | AI자동해결 | 종료 | ✓ | `src/app.js` |
+| 세션 복원 시 30분 초과 | 다음 메시지 보낼 때 | AI자동해결 | 종료 | ✓ | `src/routes/chat.js` |
+| 다른 가게로 전환 | store_id 다를 때 | AI자동해결 | 종료 | ✓ | `src/routes/chat.js` |
+| 상담사가 직접 종료 | `PATCH /cases/:id` | - | 종료 | ✓ | `src/routes/cases.js` |
+
+판단 기준: `SELECT 1 FROM messages WHERE case_id = $1 AND speaker = '상담사' LIMIT 1`
+- 있음 → **종료** (상담사가 개입한 상담)
+- 없음 → **AI자동해결** (AI만으로 해결된 상담)
+
+'대기' 상태 케이스는 자동 종료 **안 됨** (상담사가 직접 종료).
 
 ---
 

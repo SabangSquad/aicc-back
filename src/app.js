@@ -100,21 +100,50 @@ app.listen(PORT, async () => {
   // 크론잡: 5분마다 30분 비활동 '상담' 케이스 자동 종료 (대기는 건드리지 않음)
   setInterval(async () => {
     try {
-      const { rowCount } = await pool.query(`
-        UPDATE cases SET status = '종료', closed_at = NOW()
-        WHERE status = '상담'
-          AND case_id IN (
-            SELECT c.case_id FROM cases c
-            LEFT JOIN (
-              SELECT case_id, MAX(occurred_at) AS last_at
-              FROM messages GROUP BY case_id
-            ) m ON c.case_id = m.case_id
-            WHERE c.status = '상담'
-              AND (m.last_at < NOW() - INTERVAL '30 minutes'
-                OR (m.last_at IS NULL AND c.created_at < NOW() - INTERVAL '30 minutes'))
-          )
+      // 30분 비활동 '상담' 케이스 조회
+      const { rows: expiredCases } = await pool.query(`
+        SELECT c.case_id,
+          EXISTS (SELECT 1 FROM messages WHERE case_id = c.case_id AND speaker = '상담사') AS had_agent
+        FROM cases c
+        LEFT JOIN (
+          SELECT case_id, MAX(occurred_at) AS last_at
+          FROM messages GROUP BY case_id
+        ) m ON c.case_id = m.case_id
+        WHERE c.status = '상담'
+          AND (m.last_at < NOW() - INTERVAL '30 minutes'
+            OR (m.last_at IS NULL AND c.created_at < NOW() - INTERVAL '30 minutes'))
       `);
-      if (rowCount > 0) console.log(`⏰ [크론잡] ${rowCount}건 상담 자동 종료`);
+
+      for (const row of expiredCases) {
+        // 상담사 개입 있었으면 '종료', 없었으면 'AI자동해결'
+        const newStatus = row.had_agent ? '종료' : 'AI자동해결';
+        await pool.query(
+          'UPDATE cases SET status = $1, closed_at = NOW() WHERE case_id = $2',
+          [newStatus, row.case_id]
+        );
+
+        // 비동기 AI 분석 (감정/요약)
+        setImmediate(async () => {
+          try {
+            const { rows: msgs } = await pool.query(
+              'SELECT speaker, content FROM messages WHERE case_id = $1 ORDER BY occurred_at ASC',
+              [row.case_id]
+            );
+            if (!msgs.length) return;
+            const { analyzeCaseConversation } = await import('./bedrock.js');
+            const text = msgs.map(m => `${m.speaker}: ${m.content}`).join('\n');
+            const analysis = await analyzeCaseConversation(text);
+            await pool.query(
+              'UPDATE cases SET emotion = $1, summary = $2 WHERE case_id = $3',
+              [analysis.json?.emotion ?? null, analysis.json?.summary ?? null, row.case_id]
+            );
+          } catch (err) {
+            console.error(`[크론잡 분석] 케이스 ${row.case_id} 실패:`, err.message);
+          }
+        });
+      }
+
+      if (expiredCases.length > 0) console.log(`⏰ [크론잡] ${expiredCases.length}건 자동 종료`);
     } catch (err) {
       console.error('크론잡 오류:', err.message);
     }
