@@ -59,13 +59,14 @@ guardrail + memory (병렬) → supervisor → api 또는 rag → composer → E
 
 ## 2. Supervisor
 
-> 고객 질문을 분류하여 적절한 에이전트(api/rag/escalate)로 라우팅한다.
+> 고객 질문을 분류하여 적절한 에이전트(api/rag/store/escalate/reservation)로 라우팅한다.
 
 **입력 변수:**
 
 - `{{user_input}}` — 고객 질문
 - `{{context}}` — Memory Loader의 맥락 요약
 - `{{category}}` — 현재 상담 카테고리 (없으면 "없음")
+- `{{store_category}}` — 가게 업종 (병원/식당/이커머스, 없으면 "없음")
 
 **프롬프트:**
 
@@ -82,6 +83,9 @@ guardrail + memory (병렬) → supervisor → api 또는 rag → composer → E
 
 [현재 상담 카테고리]
 {{category}}
+
+[가게 업종]
+{{store_category}}
 
 분류 기준:
 - "api": 고객 본인의 개인 데이터를 조회해야 하는 경우. "내", "내 주문", "내 배송", "내 예약" 등 본인 데이터 요청. (로그인 필요)
@@ -106,6 +110,11 @@ guardrail + memory (병렬) → supervisor → api 또는 rag → composer → E
 - "환불", "교환", "주문 취소" + "~해주세요" → 환불/교환/취소 처리 → "escalate"
 - "예약" + "~하고 싶어요", "~변경", "~취소" → 예약 처리 → "reservation"
 - 매뉴얼로 해결할 수 없거나 고객이 반복적으로 불만을 표출하는 경우 → "escalate"
+
+업종별 제약 (반드시 준수):
+- 병원/식당: "reservation" 가능, "escalate"(환불/교환/주문취소) 불가 → "rag"로 안내
+- 이커머스: "escalate" 가능, "reservation" 불가 → "rag"로 안내
+- 즉, 해당 업종에 없는 기능을 요청하면 "rag"로 분류하여 "해당 서비스는 제공하지 않습니다"로 안내
 
 판단이 어려운 경우 "rag"로 분류하세요.
 

@@ -1,5 +1,30 @@
 # 변경 이력
 
+## 2026-04-05
+
+### 프론트 연동 이슈 수정 + 예약 분류 추가
+
+1. **GET /stores/:store_id 공개 접근 허용**
+   - 채팅 페이지에서 비로그인도 가게 정보 조회 가능
+
+2. **/auth/status에 store_id, customer_id 추가**
+   - 프론트에서 로그인 후 내 가게/고객 정보 바로 조회 가능
+
+3. **AI Solution JSON 파싱 강화**
+   - 파싱 실패 시 1회 재호출
+   - 코드블록(```) 제거 + 필수 필드 검증
+   - 프롬프트에 "JSON만 출력" 강조
+
+4. **예약 요청 escalate에서 분리**
+   - "예약하고 싶어요", "예약 변경/취소" → SSE `type: "reservation"` → 프론트가 폼 표시
+   - escalate는 환불/교환/주문취소만
+   - Supervisor에서 바로 처리 (별도 노드 없음)
+
+5. **Supervisor 분류 6가지로 확장**
+   - api / rag / store / escalate / reservation + 알 수 없는 intent → rag 기본 처리
+
+---
+
 ## 2026-04-03
 
 ### SSE 스트리밍, Redis 세션, storeNode, 에스컬레이션 분석, 상담 자동 종료

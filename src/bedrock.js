@@ -67,6 +67,7 @@ const graphState = {
     userQuery: null,
     caseId: null,
     storeId: null,
+    storeCategory: null,
     customerId: null,
     category: null,
     historySummary: null,
@@ -125,7 +126,8 @@ const supervisorNode = async (state) => {
   const raw = await invokePrompt(process.env.BEDROCK_SUPERVISOR_ARN, {
     user_input: state.userQuery,
     context: state.historySummary,
-    category: state.category || "없음"
+    category: state.category || "없음",
+    store_category: state.storeCategory || "없음"
   });
   const jsonMatch = raw.match(/\{[\s\S]*\}/);
   let intent = "rag";
@@ -379,11 +381,15 @@ const workflow = new StateGraph(graphState)
 workflow.addEdge(START, "pre");
 workflow.addEdge("pre", "supervisor");
 
-workflow.addConditionalEdges("supervisor", (state) => state.intent, {
+workflow.addConditionalEdges("supervisor", (state) => {
+  if (state.intent === 'reservation') return 'end';
+  return state.intent;
+}, {
   api: "api",
   rag: "rag",
   store: "store",
   escalate: "escalate",
+  end: END,
 });
 
 workflow.addConditionalEdges("api", (state) => {
@@ -412,16 +418,17 @@ const NODE_MESSAGES = {
 export async function processAICC(userQuery, caseId, storeId, customerId, res) {
   try {
     const { rows: caseRows } = await pool.query(
-      'SELECT category FROM cases WHERE case_id = $1',
+      'SELECT c.category, s.category AS store_category FROM cases c LEFT JOIN stores s ON c.store_id = s.store_id WHERE c.case_id = $1',
       [caseId]
     );
     const category = caseRows[0]?.category || null;
+    const storeCategory = caseRows[0]?.store_category || null;
 
     const startTime = Date.now();
     const config = { configurable: { thread_id: String(caseId) } };
 
     const stream = await app.stream(
-      { userQuery, caseId, storeId, customerId, category, retryCount: 0 },
+      { userQuery, caseId, storeId, storeCategory, customerId, category, retryCount: 0 },
       config
     );
 
@@ -470,12 +477,20 @@ export async function processAICC(userQuery, caseId, storeId, customerId, res) {
       };
     }
 
+    const INTENT_REASONS = {
+      rag:         "매뉴얼 기반 답변",
+      api:         "데이터 조회 기반 답변",
+      store:       "가게 정보 조회",
+      escalate:    "상담사 연결",
+      reservation: "예약 폼 안내",
+    };
+
     const response = {
       ok: true,
       answer: finalState.finalAnswer,
       suggestions: finalState.suggestedQuestions || [],
       caseId: String(caseId),
-      reason: "완료"
+      reason: INTENT_REASONS[finalState.intent] || "답변 완료"
     };
 
     console.log(`\n🎁 [Final Response] 질문 유도형 응답 생성:`);

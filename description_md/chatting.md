@@ -167,22 +167,37 @@ const result = await processAICC(message, caseId, storeId);
 
 bedrock.js의 LangGraph 워크플로우 실행 → `src/bedrock.js` 전체:
 ```
-guardrail + memory (병렬) → supervisor → api 또는 rag → composer
-                                       → escalate → END
+guardrail + memory (병렬) → supervisor → api 또는 rag 또는 store → composer → END
+                                       → escalate → END (상담사 연결 + AI 분석)
+                                       → reservation → END (supervisor에서 바로 처리)
 ```
 
 - guardrail: `src/bedrock.js` guardrailNode — Bedrock Guardrail API 호출
 - memory: `src/bedrock.js` memoryLoaderNode — DB에서 최근 5개 메시지 로드 + 요약
-- supervisor: `src/bedrock.js` supervisorNode — intent 분류 (api/rag/escalate), category 참조
+- supervisor: `src/bedrock.js` supervisorNode — intent 분류 (api/rag/store/escalate/reservation)
 - rag: `src/bedrock.js` ragNode → `src/services/searchService.js` findSimilarContext()
-- api: `src/bedrock.js` apiNode → 내부 REST API 호출 (axios)
-- escalate: `src/bedrock.js` escalateNode — cases status → `대기`, 상담사 호출 안내 반환
+- api: `src/bedrock.js` apiNode → 내부 REST API 호출 (axios). 비로그인 시 `login_required`
+- store: `src/bedrock.js` storeNode → GET /stores/:store_id 내부 호출 (로그인 불필요)
+- escalate: `src/bedrock.js` escalateNode — AI 분석(요약/감정/추천답변) + status='대기'
+- reservation: `src/bedrock.js` supervisorNode에서 바로 처리 — 별도 노드 없음
 - composer: `src/bedrock.js` composerNode — 최종 답변 + 추천 질문 생성
 
-#### escalate 조건 (supervisor가 판단)
-1. 상담 category가 환불/취소/교환/예약취소/예약변경인 경우 (최종 결정권은 사람)
-2. 질문이 위 카테고리에 해당하고 category가 없는 경우
-3. 매뉴얼에 관련 내용이 없어 AI가 해결 불가 판단 시
+#### supervisor 분류 기준
+- "api": 본인 데이터 조회 ("내 주문", "내 배송", "내 예약")
+- "store": 가게 정보 ("영업시간", "주소", "메뉴", "편의시설")
+- "rag": 정책/규정 질문 ("환불 규정", "교환 어떻게")
+- "escalate": 환불/교환/주문취소 처리 요청 ("환불해주세요", "교환 접수해주세요")
+- "reservation": 예약 관련 요청 ("예약하고 싶어요", "예약 변경/취소")
+- 알 수 없는 intent → rag로 기본 처리
+
+#### SSE 응답 타입
+| type | 의미 | 발생 조건 |
+|------|------|----------|
+| thinking | 노드 진행 중 | 매 노드 완료 시 |
+| answer | 최종 답변 | rag/api/store → composer 완료 |
+| login_required | 로그인 필요 | api + 비로그인 |
+| reservation | 예약 폼 표시 | reservation 분류 |
+| error | 에러 | 예외 발생 |
 
 ### 8단계: AI 답변 저장 + 응답 → `src/routes/chat.js` messages INSERT (speaker='챗봇')
 
