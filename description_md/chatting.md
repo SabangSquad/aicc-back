@@ -167,36 +167,36 @@ const result = await processAICC(message, caseId, storeId);
 
 bedrock.js의 LangGraph 워크플로우 실행 → `src/bedrock.js` 전체:
 ```
-guardrail + memory (병렬) → supervisor → api 또는 rag 또는 store → composer → END
+guardrail + memory (병렬) → supervisor → api/rag/store → composer → END
+                                       → greeting → composer → END (인사 — rag 건너뜀)
                                        → escalate → END (상담사 연결 + AI 분석)
-                                       → reservation → END (supervisor에서 바로 처리)
+                                       → unsupported → END (업종 미지원)
 ```
 
 - guardrail: `src/bedrock.js` guardrailNode — Bedrock Guardrail API 호출
 - memory: `src/bedrock.js` memoryLoaderNode — DB에서 최근 5개 메시지 로드 + 요약
-- supervisor: `src/bedrock.js` supervisorNode — intent 분류 (api/rag/store/escalate/reservation)
+- supervisor: `src/bedrock.js` supervisorNode — intent 분류 + 코드 후처리 (업종 체크, 인사 감지, 예약/store 보정)
 - rag: `src/bedrock.js` ragNode → `src/services/searchService.js` findSimilarContext()
 - api: `src/bedrock.js` apiNode → 내부 REST API 호출 (axios). 비로그인 시 `login_required`
-- store: `src/bedrock.js` storeNode → GET /stores/:store_id 내부 호출 (로그인 불필요)
+- store: `src/bedrock.js` storeNode → GET /stores/:store_id + 예약 현황/상품 목록 추가 조회. 예약 질문 시 `showReservationForm: true`
+- greeting: supervisor에서 sourceData 직접 설정 → rag 건너뛰고 composer로
 - escalate: `src/bedrock.js` escalateNode — AI 분석(요약/감정/추천답변) + status='대기'
-- reservation: `src/bedrock.js` supervisorNode에서 바로 처리 — 별도 노드 없음
+- unsupported: supervisor에서 업종 미지원 감지 → 바로 END
 - composer: `src/bedrock.js` composerNode — 최종 답변 + 추천 질문 생성
 
-#### supervisor 분류 기준
-- "api": 본인 데이터 조회 ("내 주문", "내 배송", "내 예약")
-- "store": 가게 정보 ("영업시간", "주소", "메뉴", "편의시설")
-- "rag": 정책/규정 질문 ("환불 규정", "교환 어떻게")
-- "escalate": 환불/교환/주문취소 처리 요청 ("환불해주세요", "교환 접수해주세요")
-- "reservation": 예약 관련 요청 ("예약하고 싶어요", "예약 변경/취소")
-- 알 수 없는 intent → rag로 기본 처리
+#### supervisor 코드 후처리 순서 (`src/bedrock.js` supervisorNode)
+1. 업종별 미지원 체크 (이커머스+예약, 병원+환불 등) → unsupported
+2. "예약" 키워드 → 내 예약 조회면 api, 나머지는 store
+3. rag인데 인사면 → greeting (composer로 직접)
+4. rag인데 규정 질문 아니면 → store로 전환
+5. 알 수 없는 intent → rag로 기본
 
 #### SSE 응답 타입
 | type | 의미 | 발생 조건 |
 |------|------|----------|
 | thinking | 노드 진행 중 | 매 노드 완료 시 |
-| answer | 최종 답변 | rag/api/store → composer 완료 |
-| login_required | 로그인 필요 | api + 비로그인 |
-| reservation | 예약 폼 표시 | reservation 분류 |
+| answer | 최종 답변 | rag/api/store/greeting → composer 완료. `showReservationForm: true` 포함 가능 |
+| login_required | 로그인 필요 | api/예약 + 비로그인. 상황별 메시지 |
 | error | 에러 | 예외 발생 |
 
 ### 8단계: AI 답변 저장 + 응답 → `src/routes/chat.js` messages INSERT (speaker='챗봇')

@@ -222,17 +222,6 @@ router.post("/", async (req, res) => {
     const customerId = req.isAuthenticated?.() ? (req.user?.customer_id ?? null) : null;
     const result = await processAICC(message, caseId, storeId, customerId, res);
 
-    // 예약 폼 응답
-    if (result.reservation) {
-      res.write(`data: ${JSON.stringify({
-        type: 'reservation',
-        message: result.answer,
-        reason: result.reason,
-        caseId: caseId,
-      })}\n\n`);
-      return res.end();
-    }
-
     // 로그인 필요 응답
     if (result.loginRequired) {
       res.write(`data: ${JSON.stringify({
@@ -258,6 +247,7 @@ router.post("/", async (req, res) => {
       reason: result.reason,
       suggestions: result.suggestions,
       caseId: caseId,
+      ...(result.showReservationForm && { showReservationForm: true }),
       _links: [{ rel: "self", href: "/chats", method: "POST" }]
     })}\n\n`);
 

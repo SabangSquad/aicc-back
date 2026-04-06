@@ -75,6 +75,8 @@ const graphState = {
     sourceData: null,
     retrievedContext: null,
     finalAnswer: null,
+    loginMessage: null,
+    showReservationForm: null,
     reason: null,
     retryCount: null,
   }
@@ -157,25 +159,13 @@ const supervisorNode = async (state) => {
     }
   }
 
-  // "예약" 키워드 처리
+  // "예약" 키워드 처리 — 내 예약 조회만 api, 나머지는 전부 store (showReservationForm으로 폼 표시)
   if (q.match(/예약/) && intent !== 'rag') {
-    if (q.match(/내\s*예약|예약\s*확인|예약\s*조회/)) {
+    if (q.match(/내\s*예약|예약.{0,4}확인|예약.{0,4}조회/)) {
       intent = 'api';
-    } else if (q.match(/언제|가능|비어|빈|되나|될까|몇시|시간|월|화|수|목|금|토|일|내일|모레|이번\s*주|\d+월|\d+일/)) {
-      intent = 'store';
     } else {
-      intent = 'reservation';
+      intent = 'store';
     }
-  }
-
-  // 예약 요청이면 로그인 체크 후 END
-  if (intent === 'reservation') {
-    if (!state.customerId) {
-      console.log(`   └─ 🔒 예약하려면 로그인 필요`);
-      return { intent: 'reservation', finalAnswer: "__LOGIN_REQUIRED__", suggestedQuestions: [] };
-    }
-    console.log(`   └─ ✅ 최종 결정: [RESERVATION] → 예약 폼 안내`);
-    return { intent, finalAnswer: "__RESERVATION__", suggestedQuestions: [] };
   }
 
   // rag로 분류됐지만 규정/정책 질문이 아니면 store로 전환
@@ -211,8 +201,14 @@ const apiNode = async (state) => {
   // 비로그인 시 로그인 요청
   if (!state.customerId) {
     console.log(`   └─ 🔒 로그인 필요 — customer_id 없음`);
+    let loginMessage = "해당 정보를 조회하려면 로그인이 필요합니다.";
+    const q = state.userQuery;
+    if (q.match(/주문|배송/)) loginMessage = "주문/배송 정보를 조회하려면 로그인이 필요합니다.";
+    else if (q.match(/예약\s*(확인|조회)/)) loginMessage = "예약 정보를 확인하려면 로그인이 필요합니다.";
+    else if (q.match(/내\s*정보/)) loginMessage = "고객 정보를 조회하려면 로그인이 필요합니다.";
     return {
       finalAnswer: "__LOGIN_REQUIRED__",
+      loginMessage,
       suggestedQuestions: []
     };
   }
@@ -503,7 +499,9 @@ const storeNode = async (state) => {
       }
     }
 
-    return { sourceData: info };
+    // 예약 관련 질문이면 폼 표시 플래그
+    const showReservationForm = !!state.userQuery.match(/예약|언제|가능|빈|비어/);
+    return { sourceData: info, showReservationForm };
   } catch (err) {
     console.error('[Store] 가게 정보 조회 실패:', err.message);
     return { sourceData: "가게 정보를 조회할 수 없습니다." };
@@ -564,7 +562,7 @@ workflow.addEdge(START, "pre");
 workflow.addEdge("pre", "supervisor");
 
 workflow.addConditionalEdges("supervisor", (state) => {
-  if (state.intent === 'reservation' || state.intent === 'unsupported') return 'end';
+  if (state.intent === 'unsupported') return 'end';
   if (state.intent === 'greeting') return 'composer';
   return state.intent;
 }, {
@@ -648,24 +646,13 @@ export async function processAICC(userQuery, caseId, storeId, customerId, res) {
       };
     }
 
-    // 예약 폼 감지
-    if (finalState.finalAnswer === "__RESERVATION__") {
-      return {
-        ok: true,
-        reservation: true,
-        answer: "예약 폼을 열어드릴게요.",
-        suggestions: [],
-        caseId: String(caseId),
-        reason: "예약"
-      };
-    }
 
     // 로그인 필요 감지
     if (finalState.finalAnswer === "__LOGIN_REQUIRED__") {
       return {
         ok: true,
         loginRequired: true,
-        answer: "해당 정보를 조회하려면 로그인이 필요합니다.",
+        answer: finalState.loginMessage || "해당 정보를 조회하려면 로그인이 필요합니다.",
         suggestions: [],
         caseId: String(caseId),
         reason: "로그인 필요"
@@ -678,7 +665,6 @@ export async function processAICC(userQuery, caseId, storeId, customerId, res) {
       store:       "가게 정보 조회",
       greeting:    "인사",
       escalate:    "상담사 연결",
-      reservation: "예약 폼 안내",
     };
 
     const response = {
@@ -686,7 +672,8 @@ export async function processAICC(userQuery, caseId, storeId, customerId, res) {
       answer: finalState.finalAnswer,
       suggestions: finalState.suggestedQuestions || [],
       caseId: String(caseId),
-      reason: INTENT_REASONS[finalState.intent] || "답변 완료"
+      reason: INTENT_REASONS[finalState.intent] || "답변 완료",
+      ...(finalState.showReservationForm && { showReservationForm: true })
     };
 
     console.log(`\n🎁 [Final Response] 질문 유도형 응답 생성:`);

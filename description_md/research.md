@@ -288,8 +288,9 @@ LangGraph 상태 머신 기반 파이프라인 (최적화 완료):
 
 ```
 guardrail + memory (병렬) → supervisor → [API | RAG | Store] → composer → END
-                                       → escalate → END (AI 분석 + 상담사 연결)
-                                       → reservation → END (supervisor에서 바로 처리)
+                                       → greeting → composer → END (인사)
+                                       → escalate → END (상담사 연결)
+                                       → unsupported → END (업종 미지원)
 ```
 
 이전 버전 대비 변경 사항:
@@ -298,21 +299,24 @@ guardrail + memory (병렬) → supervisor → [API | RAG | Store] → composer 
 - Guardrail + Memory 노드 병렬 실행 (순차→병렬)
 - Guardrail: 표준 티어 + 교차 리전 추론(cross-region inference) 적용
 - Escalate 노드 추가 (AI 분석(요약/감정/추천답변) + 상담사 호출)
-- Store 노드 추가 (가게 정보 DB 조회, Bedrock 호출 없음)
-- Reservation: supervisor에서 바로 처리 (별도 노드 없음)
-- API Agent: 비로그인 시 login_required 반환
+- Store 노드 추가 (가게 정보 + 예약 현황 + 상품 목록 조회, Bedrock 호출 없음)
+- greeting: supervisor에서 인사 감지 → rag 건너뛰고 composer로 직접
+- unsupported: supervisor에서 업종 미지원 감지 → 바로 END
+- API Agent: 비로그인 시 상황별 login_required 메시지
 - SSE 스트리밍: graph.stream()으로 노드별 진행 상황 실시간 전송
+- showReservationForm: 예약 관련 store 응답에 플래그 포함 → 프론트가 폼 표시
+- store_category: Supervisor에 가게 업종 전달 → 업종별 분류 제약
+- extractDateRange: 자연어에서 날짜 추출 (내일, 이번 주, 3월 26일, 월요일)
 
 | 노드 | 역할 | Bedrock 호출 |
 |------|------|-------------|
 | Guardrail (병렬) | 입력 안전성 검증 (표준 티어, 교차 리전 추론) | Bedrock Guardrail API |
 | Memory (병렬) | 최근 5개 메시지 맥락 요약 | invokePrompt |
-| Supervisor | 질문 분류 (api/rag/store/escalate/reservation) | invokePrompt |
-| API Agent | 내부 REST API 자동 호출 (최대 2회). 비로그인 시 login_required | invokePrompt (루프) |
+| Supervisor | 질문 분류 + 코드 후처리 (업종 체크, 인사, 예약, store 보정) | invokePrompt |
+| API Agent | 내부 REST API 자동 호출 (최대 2회). 비로그인 시 상황별 login_required | invokePrompt (루프) |
 | RAG Agent | pgvector 매뉴얼 검색 + LLM 답변 | invokePrompt |
-| Store Agent | GET /stores/:store_id 내부 호출 (로그인 불필요) | 없음 (DB만) |
+| Store Agent | GET /stores/:id + 예약 현황 + 상품 목록. showReservationForm 플래그 | 없음 (내부 API) |
 | Escalate | AI 분석(요약/감정/추천답변) + status='대기' | invokePrompt (Case Writer) |
-| Reservation | supervisor에서 바로 처리 → SSE type:"reservation" | 없음 |
 | Composer | 최종 답변 + 추천 질문 3개 | invokePrompt |
 
 **호출 횟수:** 3~4회 (store 시 3회, escalate 시 3회, reservation 시 2회, 약 4~8초)
@@ -464,7 +468,7 @@ WebSocket 없이 REST polling으로 동작.
 | AWS_REGION | AWS 리전 (ap-northeast-2) |
 | BEDROCK_GUARDRAIL_ARN | 입력 검증 가드레일 (표준티어, 교차추론) |
 | BEDROCK_MEMORY_LOADER_ARN | 대화 맥락 요약 프롬프트 |
-| BEDROCK_SUPERVISOR_ARN | 질문 분류 프롬프트 (api/rag/store/escalate/reservation) |
+| BEDROCK_SUPERVISOR_ARN | 질문 분류 프롬프트 (api/rag/store/escalate) + 코드 후처리 (greeting/unsupported) |
 | BEDROCK_API_ARN | API 에이전트 프롬프트 |
 | BEDROCK_RAG_ARN | RAG 에이전트 프롬프트 |
 | BEDROCK_COMPOSER_ARN | 최종 답변 생성 프롬프트 |
