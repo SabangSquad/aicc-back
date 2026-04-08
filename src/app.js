@@ -67,7 +67,10 @@ const chatLimiter = rateLimit({ windowMs: 60000, max: 10, message: { error: '요
 app.use('/chats', chatLimiter, chatRouter);
 app.use('/stores', storesRouter);  // GET /stores/:store_id는 공개, 나머지는 내부 isStoreOwner/isAdmin으로 보호
 
-// 6. 권한 적용
+// 6. Health check (K8s liveness/readiness probe — 인증 불필요)
+app.get('/health', (req, res) => res.json({ status: 'ok' }));
+
+// 7. 권한 적용
 app.use(isAuthorized);
 app.use('/cases',        casesRouter);
 app.use('/customers',    customersRouter);
