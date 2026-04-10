@@ -493,8 +493,8 @@ const storeNode = async (state) => {
     const storeRes = await axios({ method: 'GET', url: `${process.env.ROOT_URL}/stores/${state.storeId}`, headers });
     let info = formatStoreInfo(storeRes.data);
 
-    // 상품 관련 질문이면 상품 목록도 조회
-    if (state.userQuery.match(/상품|뭐 팔|뭐파|어떤 거|판매/)) {
+    // 이커머스면 항상 상품 목록 로드 (없는 상품 거절을 위해)
+    if (state.storeCategory === '이커머스') {
       try {
         const prodRes = await axios({ method: 'GET', url: `${process.env.ROOT_URL}/stores/${state.storeId}/products`, headers });
         const products = prodRes.data?.data || [];
