@@ -199,6 +199,12 @@ const supervisorNode = async (state) => {
     }
   }
 
+  // escalate 시 비로그인이면 로그인 유도 (상담사 답변 알림을 위해 로그인 필수)
+  if (intent === 'escalate' && !state.customerId) {
+    console.log(`   └─ 🔒 에스컬레이션하려면 로그인 필요`);
+    return { intent: 'escalate', finalAnswer: "__LOGIN_REQUIRED__", loginMessage: "상담사 연결을 위해 로그인이 필요합니다.", suggestedQuestions: [] };
+  }
+
   // 유효하지 않은 intent는 rag로 기본 처리
   const validIntents = new Set(['api', 'rag', 'store', 'escalate']);
   if (!validIntents.has(intent)) {
