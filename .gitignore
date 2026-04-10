@@ -32,3 +32,6 @@ docker-data/
 data/
 scripts/
 src/migration.js
+
+# 테스트 케이스
+description_md/test_case.md

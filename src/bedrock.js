@@ -154,7 +154,8 @@ const supervisorNode = async (state) => {
       productKeyword = parsed.product_keyword || null;
     } catch (e) { console.error("JSON 파싱 실패"); }
   }
-  // 업종별 제약 체크 (reservation보다 먼저 — 업종에 없는 키워드면 바로 차단)
+  // 업종별 제약 체크 — Supervisor intent + 핵심 키워드 기반
+  // 긴 메시지에서 부수적으로 포함된 키워드에 오판하지 않도록, intent가 해당 기능일 때만 차단
   const sc = state.storeCategory;
   const q = state.userQuery;
   if (sc) {
@@ -164,22 +165,27 @@ const supervisorNode = async (state) => {
     };
 
     if (sc === '이커머스') {
-      if (q.match(/예약/)) return unsupported('이커머스에 예약 요청');
-      if (q.match(/진료|과목|메뉴/)) return unsupported('이커머스에 진료과목/메뉴 요청');
+      // Supervisor가 store로 분류 + 예약이 주요 의도인 경우만 차단
+      if (intent === 'store' && q.match(/예약/) && !q.match(/환불|배송|상품|주문/)) return unsupported('이커머스에 예약 요청');
+      if (intent === 'store' && q.match(/진료|과목/) && !q.match(/환불|배송|상품|주문/)) return unsupported('이커머스에 진료과목 요청');
+      if (intent === 'store' && q.match(/메뉴/) && !q.match(/환불|배송|상품|주문/)) return unsupported('이커머스에 메뉴 요청');
     }
     if (sc === '병원') {
-      if (q.match(/환불|교환|주문\s*취소|배송/)) return unsupported('병원에 환불/교환/취소/배송 요청');
-      if (q.match(/메뉴|가격/)) return unsupported('병원에 메뉴/가격 요청');
+      if (intent === 'escalate') return unsupported('병원에 환불/교환/취소 요청');
+      if (intent === 'store' && q.match(/메뉴/) && !q.match(/진료|예약/)) return unsupported('병원에 메뉴 요청');
     }
     if (sc === '식당') {
-      if (q.match(/환불|교환|주문\s*취소|배송/)) return unsupported('식당에 환불/교환/취소/배송 요청');
-      if (q.match(/진료|과목/)) return unsupported('식당에 진료과목 요청');
+      if (intent === 'escalate') return unsupported('식당에 환불/교환/취소 요청');
+      if (intent === 'store' && q.match(/진료|과목/) && !q.match(/예약|메뉴/)) return unsupported('식당에 진료과목 요청');
     }
   }
 
-  // "예약" 키워드 처리 — 내 예약 조회만 api, 나머지는 전부 store (showReservationForm으로 폼 표시)
+  // "예약" 키워드 처리 — 규정/절차 질문이면 rag, 본인 데이터면 api, 나머지는 store
   if (q.match(/예약/) && intent !== 'rag') {
-    if (q.match(/내\s*예약|예약.{0,4}확인|예약.{0,4}조회/)) {
+    const isPolicyQuestion = q.match(/규정|절차|방법|어떻게|며칠|기간/);
+    if (isPolicyQuestion) {
+      intent = 'rag';
+    } else if (q.match(/내\s*예약|예약.{0,4}확인|예약.{0,4}조회|취소된\s*예약|예약.{0,4}변경/)) {
       intent = 'api';
     } else {
       intent = 'store';
