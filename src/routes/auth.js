@@ -21,7 +21,8 @@ router.get('/google/callback', (req, res, next) => {
     
       req.session.save((err) => {
         if (err) return next(err);
-        return res.redirect(`${process.env.ROOT_URL}/home`);
+        const redirectPath = user.role === 'CUSTOMER' ? '/chat' : '/home';
+        return res.redirect(`${process.env.ROOT_URL}${redirectPath}`);
       });
     });
   })(req, res, next);
