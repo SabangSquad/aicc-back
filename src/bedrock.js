@@ -77,6 +77,9 @@ const graphState = {
     finalAnswer: null,
     loginMessage: null,
     showReservationForm: null,
+    availableSlots: null,
+    dateStart: null,
+    dateEnd: null,
     reason: null,
     retryCount: null,
   }
@@ -125,16 +128,28 @@ const memoryLoaderNode = async (state) => {
 // 노드 3: Supervisor
 const supervisorNode = async (state) => {
   console.log(`🎯 [Node 3: Supervisor] 분류 중...`);
+  const today = new Date().toLocaleDateString('ko-KR', {
+    year: 'numeric', month: 'long', day: 'numeric', weekday: 'long',
+    timeZone: 'Asia/Seoul'
+  });
   const raw = await invokePrompt(process.env.BEDROCK_SUPERVISOR_ARN, {
     user_input: state.userQuery,
     context: state.historySummary,
     category: state.category || "없음",
-    store_category: state.storeCategory || "없음"
+    store_category: state.storeCategory || "없음",
+    today: today
   });
   const jsonMatch = raw.match(/\{[\s\S]*\}/);
   let intent = "rag";
+  let dateStart = null;
+  let dateEnd = null;
   if (jsonMatch) {
-    try { intent = JSON.parse(jsonMatch[0]).decision || "rag"; } catch (e) { console.error("JSON 파싱 실패"); }
+    try {
+      const parsed = JSON.parse(jsonMatch[0]);
+      intent = parsed.decision || "rag";
+      dateStart = parsed.date_start || null;
+      dateEnd = parsed.date_end || null;
+    } catch (e) { console.error("JSON 파싱 실패"); }
   }
   // 업종별 제약 체크 (reservation보다 먼저 — 업종에 없는 키워드면 바로 차단)
   const sc = state.storeCategory;
@@ -190,8 +205,8 @@ const supervisorNode = async (state) => {
     console.log(`   └─ ⚠️ 알 수 없는 intent "${intent}" → rag로 처리`);
     intent = "rag";
   }
-  console.log(`   └─ ✅ 최종 결정: [${intent.toUpperCase()}]`);
-  return { intent };
+  console.log(`   └─ ✅ 최종 결정: [${intent.toUpperCase()}]${dateStart ? ` 날짜: ${dateStart}~${dateEnd}` : ''}`);
+  return { intent, dateStart, dateEnd };
 };
 
 // 노드 4: API Agent
@@ -380,6 +395,24 @@ function extractDateRange(query) {
     const end = new Date(today); end.setDate(end.getDate() + (7 - end.getDay())); end.setHours(23, 59, 59);
     return { start, end, label: '이번 주' };
   }
+  if (query.match(/다음\s*주/)) {
+    const dayMap = { '월': 1, '화': 2, '수': 3, '목': 4, '금': 5, '토': 6, '일': 0 };
+    const dayMatch = query.match(/(월|화|수|목|금|토|일)요일/);
+    if (dayMatch) {
+      const target = dayMap[dayMatch[1]];
+      const d = new Date(today);
+      const daysUntilNextWeek = (7 - d.getDay()) + target || 7;
+      d.setDate(d.getDate() + daysUntilNextWeek);
+      const end = new Date(d); end.setHours(23, 59, 59);
+      d.setHours(0, 0, 0);
+      return { start: d, end, label: `다음 주 ${dayMatch[1]}요일` };
+    }
+    // 요일 없이 "다음 주"만
+    const start = new Date(today);
+    start.setDate(start.getDate() + (7 - start.getDay()) + 1); start.setHours(0, 0, 0);
+    const end = new Date(start); end.setDate(end.getDate() + 6); end.setHours(23, 59, 59);
+    return { start, end, label: '다음 주' };
+  }
   // "3월 26일" 패턴
   const dateMatch = query.match(/(\d{1,2})월\s*(\d{1,2})일/);
   if (dateMatch) {
@@ -470,10 +503,24 @@ const storeNode = async (state) => {
       }
     }
 
-    // 예약 관련 질문이면 해당 기간 예약 현황 조회
-    if (state.userQuery.match(/예약|언제|가능|빈|비어/)) {
+    // 예약 관련 질문이면 해당 기간 예약 현황 조회 + 빈 슬롯 계산
+    const isReservationQuery = !!state.userQuery.match(/예약|언제|가능|빈|비어/);
+    let availableSlots = null;
+
+    if (isReservationQuery) {
       try {
-        const { start, end, label } = extractDateRange(state.userQuery);
+        // Supervisor가 추출한 날짜 우선, 없으면 extractDateRange 폴백
+        let start, end, label;
+        if (state.dateStart) {
+          start = new Date(state.dateStart); start.setHours(0, 0, 0);
+          end = new Date(state.dateEnd || state.dateStart); end.setHours(23, 59, 59);
+          label = state.dateStart === state.dateEnd
+            ? new Date(state.dateStart).toLocaleDateString('ko-KR', { month: 'long', day: 'numeric', weekday: 'short' })
+            : `${state.dateStart} ~ ${state.dateEnd}`;
+        } else {
+          ({ start, end, label } = extractDateRange(state.userQuery));
+        }
+
         const startStr = start.toISOString();
         const endStr = end.toISOString();
         const reservRes = await axios({
@@ -482,6 +529,38 @@ const storeNode = async (state) => {
           headers
         });
         const reservations = (reservRes.data?.data || []).filter(r => r.status === '완료');
+        const bookedTimes = new Set(reservations.map(r => {
+          const d = new Date(r.reserved_at);
+          return `${d.toISOString().split('T')[0]}_${d.getHours()}`;
+        }));
+
+        // 영업시간에서 빈 슬롯 계산
+        const bh = storeRes.data.business_hours;
+        if (bh) {
+          const dayKeys = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+          availableSlots = [];
+          const current = new Date(start);
+          while (current <= end) {
+            const dayKey = dayKeys[current.getDay()];
+            const hours = typeof bh === 'string' ? JSON.parse(bh) : bh;
+            const timeRange = hours[dayKey];
+            if (timeRange && timeRange !== 'off') {
+              const [openStr, closeStr] = timeRange.split('-');
+              const openHour = parseInt(openStr.split(':')[0]);
+              const closeHour = parseInt(closeStr.split(':')[0]);
+              const dateStr = current.toISOString().split('T')[0];
+              for (let h = openHour; h < closeHour; h++) {
+                const key = `${dateStr}_${h}`;
+                if (!bookedTimes.has(key)) {
+                  availableSlots.push({ date: dateStr, time: `${String(h).padStart(2, '0')}:00` });
+                }
+              }
+            }
+            current.setDate(current.getDate() + 1);
+          }
+        }
+
+        // Composer용 텍스트도 추가
         if (reservations.length > 0) {
           const booked = reservations.map(r => {
             const d = new Date(r.reserved_at);
@@ -499,9 +578,11 @@ const storeNode = async (state) => {
       }
     }
 
-    // 예약 관련 질문이면 폼 표시 플래그
-    const showReservationForm = !!state.userQuery.match(/예약|언제|가능|빈|비어/);
-    return { sourceData: info, showReservationForm };
+    return {
+      sourceData: info,
+      showReservationForm: isReservationQuery,
+      availableSlots
+    };
   } catch (err) {
     console.error('[Store] 가게 정보 조회 실패:', err.message);
     return { sourceData: "가게 정보를 조회할 수 없습니다." };
@@ -673,7 +754,8 @@ export async function processAICC(userQuery, caseId, storeId, customerId, res) {
       suggestions: finalState.suggestedQuestions || [],
       caseId: String(caseId),
       reason: INTENT_REASONS[finalState.intent] || "답변 완료",
-      ...(finalState.showReservationForm && { showReservationForm: true })
+      ...(finalState.showReservationForm && { showReservationForm: true }),
+      ...(finalState.availableSlots && { availableSlots: finalState.availableSlots })
     };
 
     console.log(`\n🎁 [Final Response] 질문 유도형 응답 생성:`);

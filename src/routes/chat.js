@@ -277,6 +277,7 @@ router.post("/", async (req, res) => {
       suggestions: result.suggestions,
       caseId: caseId,
       ...(result.showReservationForm && { showReservationForm: true }),
+      ...(result.availableSlots && { availableSlots: result.availableSlots }),
       _links: [{ rel: "self", href: "/chats", method: "POST" }]
     })}\n\n`);
 
