@@ -844,7 +844,14 @@ router.get('/:store_id/solutions', isStoreOwner, async (req, res) => {
     );
 
     if (cases.length === 0) {
-      return res.status(404).json({ error: `최근 ${hours}시간 동안 분석할 상담이 없습니다.` });
+      return res.json({
+        store_id: storeId,
+        hours,
+        total_cases: 0,
+        stats: { by_category: [], by_emotion: [] },
+        ai_analysis: null,
+        _links: [{ rel: 'self', href: `/stores/${storeId}/solutions?hours=${hours}`, method: 'GET' }]
+      });
     }
 
     // 2. 코드로 통계 계산 (정확한 숫자)
