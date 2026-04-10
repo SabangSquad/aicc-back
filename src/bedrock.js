@@ -80,6 +80,7 @@ const graphState = {
     availableSlots: null,
     dateStart: null,
     dateEnd: null,
+    productKeyword: null,
     reason: null,
     retryCount: null,
   }
@@ -143,12 +144,14 @@ const supervisorNode = async (state) => {
   let intent = "rag";
   let dateStart = null;
   let dateEnd = null;
+  let productKeyword = null;
   if (jsonMatch) {
     try {
       const parsed = JSON.parse(jsonMatch[0]);
       intent = parsed.decision || "rag";
       dateStart = parsed.date_start || null;
       dateEnd = parsed.date_end || null;
+      productKeyword = parsed.product_keyword || null;
     } catch (e) { console.error("JSON 파싱 실패"); }
   }
   // 업종별 제약 체크 (reservation보다 먼저 — 업종에 없는 키워드면 바로 차단)
@@ -211,8 +214,8 @@ const supervisorNode = async (state) => {
     console.log(`   └─ ⚠️ 알 수 없는 intent "${intent}" → rag로 처리`);
     intent = "rag";
   }
-  console.log(`   └─ ✅ 최종 결정: [${intent.toUpperCase()}]${dateStart ? ` 날짜: ${dateStart}~${dateEnd}` : ''}`);
-  return { intent, dateStart, dateEnd };
+  console.log(`   └─ ✅ 최종 결정: [${intent.toUpperCase()}]${dateStart ? ` 날짜: ${dateStart}~${dateEnd}` : ''}${productKeyword ? ` 상품: ${productKeyword}` : ''}`);
+  return { intent, dateStart, dateEnd, productKeyword };
 };
 
 // 노드 4: API Agent
@@ -493,16 +496,29 @@ const storeNode = async (state) => {
     const storeRes = await axios({ method: 'GET', url: `${process.env.ROOT_URL}/stores/${state.storeId}`, headers });
     let info = formatStoreInfo(storeRes.data);
 
-    // 이커머스면 항상 상품 목록 로드 (없는 상품 거절을 위해)
+    // 이커머스 상품 조회 — keyword 있으면 ILIKE 검색, 없으면 전체(최대 20개)
     if (state.storeCategory === '이커머스') {
       try {
         const prodRes = await axios({ method: 'GET', url: `${process.env.ROOT_URL}/stores/${state.storeId}/products`, headers });
-        const products = prodRes.data?.data || [];
-        if (products.length > 0) {
-          const list = products.map(p => `${p.name} ${p.price.toLocaleString()}원`).join(', ');
-          info += `\n상품 목록: ${list}`;
+        let products = prodRes.data?.data || [];
+
+        if (state.productKeyword) {
+          const keyword = state.productKeyword;
+          const filtered = products.filter(p => p.name.toLowerCase().includes(keyword.toLowerCase()));
+          if (filtered.length > 0) {
+            const list = filtered.map(p => `${p.name} ${p.price.toLocaleString()}원`).join(', ');
+            info += `\n상품 검색 결과 (\"${keyword}\"): ${list}`;
+          } else {
+            info += `\n상품 검색 결과 (\"${keyword}\"): 해당 상품을 찾을 수 없습니다.`;
+          }
         } else {
-          info += `\n상품 목록: 등록된 상품이 없습니다.`;
+          const limited = products.slice(0, 20);
+          if (limited.length > 0) {
+            const list = limited.map(p => `${p.name} ${p.price.toLocaleString()}원`).join(', ');
+            info += `\n상품 목록: ${list}${products.length > 20 ? ` 외 ${products.length - 20}개` : ''}`;
+          } else {
+            info += `\n상품 목록: 등록된 상품이 없습니다.`;
+          }
         }
       } catch (e) {
         console.error('[Store] 상품 목록 조회 실패:', e.message);

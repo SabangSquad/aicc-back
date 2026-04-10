@@ -140,14 +140,15 @@ guardrail + memory (병렬) → supervisor → api 또는 rag → composer → E
 - 반드시 JSON 한 줄로만 출력
 - 추가 설명, 공백, 문장 절대 금지
 - 예약/시간 관련 질문이면 오늘 날짜를 기준으로 date_start, date_end를 YYYY-MM-DD 형식으로 포함
+- 상품/메뉴/진료과목 관련 질문이면 고객이 찾는 항목을 product_keyword로 추출 (오타 교정 포함)
 
 가능한 출력:
 {"decision": "api"}
 {"decision": "rag"}
 {"decision": "store"}
 {"decision": "store", "date_start": "2026-04-16", "date_end": "2026-04-16"}
+{"decision": "store", "product_keyword": "라디오"}
 {"decision": "escalate"}
-{"decision": "reservation"}
 ```
 
 ---
