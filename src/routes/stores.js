@@ -873,6 +873,29 @@ router.get('/:store_id/solutions', isStoreOwner, async (req, res) => {
       by_emotion: byEmotion.map(r => ({ emotion: r.emotion, count: r.count })),
     };
 
+    // 2-1. 품질 score 계산 (0~100)
+    const totalCases = cases.length;
+    const aiResolved = cases.filter(c => c.status === 'AI자동해결').length;
+    const negativeEmotions = cases.filter(c => c.emotion === '화남' || c.emotion === '짜증').length;
+
+    const { rows: satRows } = await pool.query(
+      `SELECT AVG(score)::numeric(3,1) AS avg_score FROM satisfactions
+       WHERE store_id = $1 AND collected_at >= NOW() - INTERVAL '1 hour' * $2`,
+      [storeId, hours]
+    );
+    const satisfactionAvg = parseFloat(satRows[0]?.avg_score) || 0;
+
+    // score = AI해결률(40%) + 부정감정 비율 역수(30%) + 만족도(30%)
+    const aiResolveRate = totalCases > 0 ? aiResolved / totalCases : 0;
+    const negativeRate = totalCases > 0 ? negativeEmotions / totalCases : 0;
+    const satisfactionRate = satisfactionAvg / 5; // 0~1 (5점 만점 기준)
+
+    const score = Math.round(
+      (aiResolveRate * 40) +
+      ((1 - negativeRate) * 30) +
+      (satisfactionRate * 30)
+    );
+
     // 3. AI에 넘길 텍스트 구성 (통계 + summary)
     const statsText = [
       `총 상담: ${cases.length}건 / 기간: 최근 ${hours}시간`,
@@ -892,7 +915,9 @@ router.get('/:store_id/solutions', isStoreOwner, async (req, res) => {
       store_id: storeId,
       hours,
       total_cases: cases.length,
+      score,
       stats,
+      satisfaction_avg: satisfactionAvg,
       ai_analysis: aiAnalysis,
       _links: [{ rel: 'self', href: `/stores/${storeId}/solutions?hours=${hours}`, method: 'GET' }]
     });
