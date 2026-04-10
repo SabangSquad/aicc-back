@@ -123,10 +123,23 @@ router.post("/", async (req, res) => {
 
     client = await pool.connect();
 
-    // caseId 우선순위: body > 세션 > 신규 생성
+    // caseId 우선순위: body > 세션 > DB(로그인 유저) > 신규 생성
     let caseId = inputCaseId || req.session?.chatCaseId || null;
 
     await client.query('BEGIN');
+
+    // 로그인 유저인데 세션에 caseId 없으면 DB에서 진행 중 케이스 복원
+    if (!caseId && req.isAuthenticated?.() && req.user?.customer_id) {
+      const { rows: activeCases } = await client.query(
+        "SELECT case_id FROM cases WHERE customer_id = $1 AND status IN ('상담', '대기') ORDER BY created_at DESC LIMIT 1",
+        [req.user.customer_id]
+      );
+      if (activeCases.length) {
+        caseId = activeCases[0].case_id;
+        if (req.session) req.session.chatCaseId = caseId;
+        console.log(`🔄 [채팅] 로그인 유저 진행 중 케이스 복원: ${caseId}`);
+      }
+    }
 
     // 세션 복원된 케이스: 종료 상태이거나 30분 비활동이면 자동 종료 → 새로 시작
     if (caseId && !inputCaseId) {
@@ -218,12 +231,30 @@ router.post("/", async (req, res) => {
       req.session.chatCaseId = caseId;
     }
 
-    // 비로그인→로그인 전환: 기존 케이스에 customer_id 연결
+    // 비로그인→로그인 전환: 상담은 하나만 열림
     if (req.isAuthenticated?.() && req.user?.customer_id) {
-      await client.query(
-        'UPDATE cases SET customer_id = $1 WHERE case_id = $2 AND customer_id IS NULL',
-        [req.user.customer_id, caseId]
+      // 기존 진행 중 케이스 확인 (상담 또는 대기)
+      const { rows: existingCases } = await client.query(
+        "SELECT case_id FROM cases WHERE customer_id = $1 AND status IN ('상담', '대기') ORDER BY created_at DESC LIMIT 1",
+        [req.user.customer_id]
       );
+
+      if (existingCases.length && existingCases[0].case_id !== caseId) {
+        // 현재 비로그인 케이스 종료 → 기존 케이스로 복원
+        await client.query(
+          "UPDATE cases SET status = 'AI자동해결', closed_at = NOW() WHERE case_id = $1",
+          [caseId]
+        );
+        caseId = existingCases[0].case_id;
+        if (req.session) req.session.chatCaseId = caseId;
+        console.log(`🔄 [채팅] 기존 진행 중 케이스로 복원: ${caseId}`);
+      } else {
+        // 기존 케이스 없으면 현재 케이스에 customer_id 연결
+        await client.query(
+          'UPDATE cases SET customer_id = $1 WHERE case_id = $2 AND customer_id IS NULL',
+          [req.user.customer_id, caseId]
+        );
+      }
     }
 
     // 고객 메시지 저장
