@@ -381,24 +381,26 @@ const escalateNode = async (state) => {
 
   let summary = null;
   let emotion = null;
+  let category = null;
 
   if (msgs.length > 0) {
     try {
       const text = msgs.map(m => `${m.speaker}: ${m.content}`).join('\n');
-      const analysis = await analyzeCaseConversation(text);
+      const analysis = await analyzeCaseConversation(text, state.storeCategory);
       const suggestedReply = analysis.json?.suggested_reply ?? null;
       summary = analysis.json?.summary ?? null;
       if (suggestedReply) summary += `\n\n[추천 답변] ${suggestedReply}`;
       emotion = analysis.json?.emotion ?? null;
+      category = analysis.json?.category ?? null;
     } catch (err) {
       console.error('[Escalate] AI 분석 실패:', err.message);
     }
   }
 
-  // summary + emotion + status='대기' 저장
+  // summary + emotion + category + status='대기' 저장
   await pool.query(
-    "UPDATE cases SET status = '대기', summary = $1, emotion = $2 WHERE case_id = $3",
-    [summary, emotion, state.caseId]
+    "UPDATE cases SET status = '대기', summary = $1, emotion = $2, category = COALESCE($3, category) WHERE case_id = $4",
+    [summary, emotion, category, state.caseId]
   );
 
   return {
@@ -904,9 +906,10 @@ export async function processAICC(userQuery, caseId, storeId, customerId, res) {
 }
 
 // 상담 분석
-export async function analyzeCaseConversation(conversationText) {
-  const res = await invokePrompt(process.env.BEDROCK_CASE_WRITER_ARN, { 
-    conversation_text: conversationText 
+export async function analyzeCaseConversation(conversationText, storeCategory = null) {
+  const res = await invokePrompt(process.env.BEDROCK_CASE_WRITER_ARN, {
+    conversation_text: conversationText,
+    store_category: storeCategory || "없음"
   });
   try {
     const json = JSON.parse(res.match(/\{[\s\S]*\}/)?.[0] || 'null');

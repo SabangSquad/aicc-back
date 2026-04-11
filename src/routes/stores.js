@@ -846,7 +846,7 @@ router.get('/:store_id/solutions', isStoreOwner, async (req, res) => {
 
     // 1. 최근 N시간 상담 조회 (summary 있는 것만)
     const { rows: cases } = await pool.query(
-      `SELECT case_id, category, emotion, summary, created_at
+      `SELECT case_id, category, emotion, summary, status, created_at
        FROM cases
        WHERE store_id = $1
          AND created_at >= NOW() - INTERVAL '1 hour' * $2

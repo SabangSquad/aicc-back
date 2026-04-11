@@ -133,12 +133,17 @@ app.listen(PORT, async () => {
               [row.case_id]
             );
             if (!msgs.length) return;
+            const { rows: storeRows } = await pool.query(
+              'SELECT s.category FROM cases c LEFT JOIN stores s ON c.store_id = s.store_id WHERE c.case_id = $1',
+              [row.case_id]
+            );
+            const storeCategory = storeRows[0]?.category || null;
             const { analyzeCaseConversation } = await import('./bedrock.js');
             const text = msgs.map(m => `${m.speaker}: ${m.content}`).join('\n');
-            const analysis = await analyzeCaseConversation(text);
+            const analysis = await analyzeCaseConversation(text, storeCategory);
             await pool.query(
-              'UPDATE cases SET emotion = $1, summary = $2 WHERE case_id = $3',
-              [analysis.json?.emotion ?? null, analysis.json?.summary ?? null, row.case_id]
+              'UPDATE cases SET emotion = $1, summary = $2, category = COALESCE($3, category) WHERE case_id = $4',
+              [analysis.json?.emotion ?? null, analysis.json?.summary ?? null, analysis.json?.category ?? null, row.case_id]
             );
           } catch (err) {
             console.error(`[크론잡 분석] 케이스 ${row.case_id} 실패:`, err.message);

@@ -245,11 +245,16 @@ router.route('/:case_id')
               [caseId]
             );
             if (!msgs.length) return;
+            const { rows: storeRows } = await pool.query(
+              'SELECT s.category FROM cases c LEFT JOIN stores s ON c.store_id = s.store_id WHERE c.case_id = $1',
+              [caseId]
+            );
+            const storeCategory = storeRows[0]?.category || null;
             const conversationText = msgs.map(m => `${m.speaker}: ${m.content}`).join('\n');
-            const analysis = await analyzeCaseConversation(conversationText);
+            const analysis = await analyzeCaseConversation(conversationText, storeCategory);
             await pool.query(
-              `UPDATE cases SET emotion = $1, summary = $2 WHERE case_id = $3`,
-              [analysis.json?.emotion ?? null, analysis.json?.summary ?? null, caseId]
+              `UPDATE cases SET emotion = $1, summary = $2, category = COALESCE($3, category) WHERE case_id = $4`,
+              [analysis.json?.emotion ?? null, analysis.json?.summary ?? null, analysis.json?.category ?? null, caseId]
             );
           } catch (err) {
             console.error(`[종료 에이전트] 케이스 ${caseId} 분석 실패:`, err.message);

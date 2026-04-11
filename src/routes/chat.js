@@ -192,12 +192,17 @@ router.post("/", async (req, res) => {
               [closedCaseId]
             );
             if (!msgs.length) return;
+            const { rows: storeRows } = await pool.query(
+              'SELECT s.category FROM cases c LEFT JOIN stores s ON c.store_id = s.store_id WHERE c.case_id = $1',
+              [closedCaseId]
+            );
+            const storeCategory = storeRows[0]?.category || null;
             const { analyzeCaseConversation } = await import('../bedrock.js');
             const text = msgs.map(m => `${m.speaker}: ${m.content}`).join('\n');
-            const analysis = await analyzeCaseConversation(text);
+            const analysis = await analyzeCaseConversation(text, storeCategory);
             await pool.query(
-              'UPDATE cases SET emotion = $1, summary = $2 WHERE case_id = $3',
-              [analysis.json?.emotion ?? null, analysis.json?.summary ?? null, closedCaseId]
+              'UPDATE cases SET emotion = $1, summary = $2, category = COALESCE($3, category) WHERE case_id = $4',
+              [analysis.json?.emotion ?? null, analysis.json?.summary ?? null, analysis.json?.category ?? null, closedCaseId]
             );
           } catch (err) {
             console.error(`[자동종료 분석] 케이스 ${closedCaseId} 실패:`, err.message);
@@ -413,7 +418,7 @@ router.post("/:case_id/close", async (req, res) => {
       delete req.session.chatCaseId;
     }
 
-    // 비동기 AI 분석 (감정/요약)
+    // 비동기 AI 분석 (감정/요약/카테고리)
     setImmediate(async () => {
       try {
         const { rows: msgs } = await pool.query(
@@ -421,11 +426,16 @@ router.post("/:case_id/close", async (req, res) => {
           [caseId]
         );
         if (!msgs.length) return;
+        const { rows: storeRows } = await pool.query(
+          'SELECT s.category FROM cases c LEFT JOIN stores s ON c.store_id = s.store_id WHERE c.case_id = $1',
+          [caseId]
+        );
+        const storeCategory = storeRows[0]?.category || null;
         const text = msgs.map(m => `${m.speaker}: ${m.content}`).join('\n');
-        const analysis = await analyzeCaseConversation(text);
+        const analysis = await analyzeCaseConversation(text, storeCategory);
         await pool.query(
-          'UPDATE cases SET emotion = $1, summary = $2 WHERE case_id = $3',
-          [analysis.json?.emotion ?? null, analysis.json?.summary ?? null, caseId]
+          'UPDATE cases SET emotion = $1, summary = $2, category = COALESCE($3, category) WHERE case_id = $4',
+          [analysis.json?.emotion ?? null, analysis.json?.summary ?? null, analysis.json?.category ?? null, caseId]
         );
       } catch (err) {
         console.error(`[종료 분석] 케이스 ${caseId} 실패:`, err.message);
@@ -587,21 +597,27 @@ router.post("/:case_id", async (req, res) => {
       })
       .join("\n");
 
-    const analysis = await analyzeCaseConversation(conversationText);
+    const { rows: storeRows } = await pool.query(
+      'SELECT s.category FROM cases c LEFT JOIN stores s ON c.store_id = s.store_id WHERE c.case_id = $1',
+      [caseIdNum]
+    );
+    const storeCategory = storeRows[0]?.category || null;
+    const analysis = await analyzeCaseConversation(conversationText, storeCategory);
 
     const emotion = analysis.json?.emotion ?? null;
     const summary = analysis.json?.summary ?? null;
+    const category = analysis.json?.category ?? null;
     const suggestedAnswer = analysis.json?.suggested_reply ?? null;
 
-    // cases 테이블에 emotion / summary 저장
+    // cases 테이블에 emotion / summary / category 저장
     try {
       await pool.query(
-        `UPDATE cases SET emotion = $1, summary = $2 WHERE case_id = $3`,
-        [emotion, summary, caseIdNum]
+        `UPDATE cases SET emotion = $1, summary = $2, category = COALESCE($3, category) WHERE case_id = $4`,
+        [emotion, summary, category, caseIdNum]
       );
     } catch (dbErr) {
       // DB 업데이트 실패해도 분석 결과 응답은 내려줌
-      console.error("케이스 emotion/summary 업데이트 실패:", dbErr);
+      console.error("케이스 emotion/summary/category 업데이트 실패:", dbErr);
     }
 
     return res.json({
