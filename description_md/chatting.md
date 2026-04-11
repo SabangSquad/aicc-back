@@ -175,10 +175,10 @@ guardrail + memory (병렬) → supervisor → api/rag/store → composer → EN
 
 - guardrail: `src/bedrock.js` guardrailNode — Bedrock Guardrail API 호출
 - memory: `src/bedrock.js` memoryLoaderNode — DB에서 최근 5개 메시지 로드 + 요약
-- supervisor: `src/bedrock.js` supervisorNode — intent 분류 + 코드 후처리 (업종 체크, 인사 감지, 예약/store 보정)
+- supervisor: `src/bedrock.js` supervisorNode — intent 분류 + 코드 후처리 (업종 체크, 인사 감지, 예약/store 보정, reservation_type 판정)
 - rag: `src/bedrock.js` ragNode → `src/services/searchService.js` findSimilarContext()
 - api: `src/bedrock.js` apiNode → 내부 REST API 호출 (axios). 비로그인 시 `login_required`
-- store: `src/bedrock.js` storeNode → GET /stores/:store_id + 예약 현황/상품 목록 추가 조회. 예약 질문 시 `showReservationForm: true`
+- store: `src/bedrock.js` storeNode → GET /stores/:store_id + 예약 현황/상품 목록 추가 조회. 예약 action + 로그인 시 `showReservationForm: true` + `availableSlots`, action + 비로그인 시 `login_required`(가능 시간 참고 포함), inquiry는 텍스트 안내만
 - greeting: supervisor에서 sourceData 직접 설정 → rag 건너뛰고 composer로
 - escalate: `src/bedrock.js` escalateNode — AI 분석(요약/감정/추천답변) + status='대기'
 - unsupported: supervisor에서 업종 미지원 감지 → 바로 END
@@ -186,17 +186,19 @@ guardrail + memory (병렬) → supervisor → api/rag/store → composer → EN
 
 #### supervisor 코드 후처리 순서 (`src/bedrock.js` supervisorNode)
 1. 업종별 미지원 체크 (이커머스+예약, 병원+환불 등) → unsupported
-2. "예약" 키워드 → 내 예약 조회면 api, 나머지는 store
+2. "예약" 키워드 → 규정 질문이면 rag, 내 예약 조회면 api, 나머지는 store
 3. rag인데 인사면 → greeting (composer로 직접)
 4. rag인데 규정 질문 아니면 → store로 전환
-5. 알 수 없는 intent → rag로 기본
+5. escalate + 비로그인 → login_required
+6. 알 수 없는 intent → rag로 기본
+7. reservation_type 확정 (intent === store 일 때): Supervisor가 준 값 우선, 없으면 행동 동사(할래/할게/하고 싶어/해줘/잡아/잡고 싶어) 정규식으로 inquiry/action 판정
 
 #### SSE 응답 타입
 | type | 의미 | 발생 조건 |
 |------|------|----------|
 | thinking | 노드 진행 중 | 매 노드 완료 시 |
-| answer | 최종 답변 | rag/api/store/greeting → composer 완료. `showReservationForm: true` 포함 가능 |
-| login_required | 로그인 필요 | api/예약 + 비로그인. 상황별 메시지 |
+| answer | 최종 답변 | rag/api/store/greeting → composer 완료. 예약 action + 로그인 시 `showReservationForm: true` + `availableSlots` 포함 |
+| login_required | 로그인 필요 | api 개인 데이터 조회, escalate, 예약 action(실제 예약 의사) + 비로그인. 상황별 메시지 (예약은 가능 시간 참고로 포함) |
 | error | 에러 | 예외 발생 |
 
 ### 8단계: AI 답변 저장 + 응답 → `src/routes/chat.js` messages INSERT (speaker='챗봇')

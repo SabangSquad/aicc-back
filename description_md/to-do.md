@@ -195,3 +195,8 @@ return res.redirect(`${ROOT_URL}/home`);
 | reason 의도별 표시 (매뉴얼 기반/데이터 조회/가게 정보 등) | 완료 |
 | 자동 종료 시 AI자동해결/종료 분기 (speaker='상담사' 기준) | 완료 |
 | 모든 종료 경로에서 AI 분석(감정/요약) 실행 | 완료 |
+| 예약 inquiry/action 세분화 (reservation_type) | 완료 |
+| 비로그인 예약 action → login_required (가능 시간 참고 포함) | 완료 |
+| availableSlots 타임존 버그 수정 (toLocalDateStr) | 완료 |
+| LangGraph 체크포인트 carry-over 방지 (state 리셋) | 완료 |
+| GET /stores/:store_id/reservations 공개 + customer_id 선택적 노출 | 완료 |

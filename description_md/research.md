@@ -165,7 +165,7 @@ orders (1)
 | GET | `/stores/:store_id/cases` | 가게 상담 목록 | isStoreOwner | pagination |
 | GET | `/stores/:store_id/satisfactions` | 가게 만족도 | isStoreOwner | pagination |
 | GET | `/stores/:store_id/orders` | 가게 주문 목록 | isStoreOwner | pagination + status/start/end 필터 |
-| GET | `/stores/:store_id/reservations` | 가게 예약 목록 | isStoreOwner | pagination + status/start/end 필터 |
+| GET | `/stores/:store_id/reservations` | 가게 예약 목록 | 공개 | pagination + status/start/end 필터. customer_id는 해당 가게 OWNER/ADMIN/내부 호출에만 노출 |
 | GET | `/stores/:store_id/manuals` | 가게 매뉴얼 목록 | isAuthorized | pagination |
 | POST | `/stores/:store_id/manuals` | 매뉴얼 추가 (+ 임베딩 자동 생성) | isStoreOwner | |
 | PATCH | `/stores/:store_id/manuals/:manual_id` | 매뉴얼 수정 (content 변경 시 임베딩 재생성) | isStoreOwner | |
@@ -304,18 +304,22 @@ guardrail + memory (병렬) → supervisor → [API | RAG | Store] → composer 
 - unsupported: supervisor에서 업종 미지원 감지 → 바로 END
 - API Agent: 비로그인 시 상황별 login_required 메시지
 - SSE 스트리밍: graph.stream()으로 노드별 진행 상황 실시간 전송
-- showReservationForm: 예약 관련 store 응답에 플래그 포함 → 프론트가 폼 표시
+- reservation_type: Supervisor가 예약 질문을 inquiry(조회) / action(실제 예약 의사)으로 세분화
+  - inquiry → 텍스트로 가능 시간만 안내 (폼/슬롯 미전달)
+  - action + 로그인 → `showReservationForm: true` + `availableSlots`
+  - action + 비로그인 → `login_required` (가능한 시간 참고 포함)
 - store_category: Supervisor에 가게 업종 전달 → 업종별 분류 제약
-- extractDateRange: 자연어에서 날짜 추출 (내일, 이번 주, 3월 26일, 월요일)
+- Supervisor LLM이 자연어 날짜를 YYYY-MM-DD 형식으로 직접 추출 ({{today}} 변수 주입). 실패 시 extractDateRange 정규식 폴백
+- LangGraph 체크포인트 carry-over 방지: 매 턴 `app.stream()` 호출 시 state 필드 명시적 리셋
 
 | 노드 | 역할 | Bedrock 호출 |
 |------|------|-------------|
 | Guardrail (병렬) | 입력 안전성 검증 (표준 티어, 교차 리전 추론) | Bedrock Guardrail API |
 | Memory (병렬) | 최근 5개 메시지 맥락 요약 | invokePrompt |
-| Supervisor | 질문 분류 + 코드 후처리 (업종 체크, 인사, 예약, store 보정) | invokePrompt |
+| Supervisor | 질문 분류 + 코드 후처리 (업종 체크, 인사, 예약, store 보정, reservation_type 판정) | invokePrompt |
 | API Agent | 내부 REST API 자동 호출 (최대 2회). 비로그인 시 상황별 login_required | invokePrompt (루프) |
 | RAG Agent | pgvector 매뉴얼 검색 + LLM 답변 | invokePrompt |
-| Store Agent | GET /stores/:id + 예약 현황 + 상품 목록. showReservationForm 플래그 | 없음 (내부 API) |
+| Store Agent | GET /stores/:id + 예약 현황 + 상품 목록 + availableSlots 계산. reservation_type(inquiry/action)별 분기 — action+비로그인은 login_required로 조기 종료 | 없음 (내부 API) |
 | Escalate | AI 분석(요약/감정/추천답변) + status='대기' | invokePrompt (Case Writer) |
 | Composer | 최종 답변 + 추천 질문 3개 | invokePrompt |
 
@@ -324,7 +328,7 @@ guardrail + memory (병렬) → supervisor → [API | RAG | Store] → composer 
 ### 상태 채널
 
 ```js
-{ userQuery, caseId, storeId, category, historySummary, intent, sourceData, retrievedContext, finalAnswer, reason, retryCount }
+{ userQuery, caseId, storeId, storeCategory, customerId, category, historySummary, intent, sourceData, retrievedContext, finalAnswer, loginMessage, showReservationForm, availableSlots, dateStart, dateEnd, productKeyword, reservationType, reason, retryCount }
 ```
 
 ### Case Writer (종료 시 별도)
