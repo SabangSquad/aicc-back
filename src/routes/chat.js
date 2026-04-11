@@ -16,7 +16,7 @@ const router = express.Router();
  *  post:
  *    summary: "AI에 질문 → 답변 수신"
  *    description: |
- *      고객 발화를 Bedrock LLM에 전달하여 [응답] / [근거] 형식의 상담 답변을 생성합니다.
+ *      고객 발화를 vLLM 기반 LLM에 전달하여 [응답] / [근거] 형식의 상담 답변을 생성합니다.
  *      - 케이스가 없으면 신규 케이스를 자동 생성합니다.
  *      - 메시지(고객·챗봇)는 messages 테이블에 자동 저장됩니다.
  *    tags:
@@ -44,7 +44,7 @@ const router = express.Router();
  *                example: 1
  *    responses:
  *      200:
- *        description: "정상적으로 Bedrock에서 응답을 생성한 경우"
+ *        description: "정상적으로 LLM에서 응답을 생성한 경우"
  *        content:
  *          application/json:
  *            schema:
@@ -92,7 +92,7 @@ const router = express.Router();
  *                  type: string
  *                  example: "message 필드는 반드시 string이어야 합니다."
  *      500:
- *        description: "Bedrock 호출 중 서버 내부 오류"
+ *        description: "LLM 호출 중 서버 내부 오류"
  *        content:
  *          application/json:
  *            schema:
@@ -103,7 +103,7 @@ const router = express.Router();
  *                  example: false
  *                error:
  *                  type: string
- *                  example: "Bedrock 호출 중 오류가 발생했습니다."
+ *                  example: "LLM 호출 중 오류가 발생했습니다."
  *                detail:
  *                  type: string
  *                  description: "실제 에러 메시지"
@@ -283,7 +283,7 @@ router.post("/", async (req, res) => {
       'Connection': 'keep-alive',
     });
 
-    // Bedrock 스트리밍 호출 (각 노드 진행 시 SSE로 프론트에 전송)
+    // LLM 스트리밍 호출 (각 노드 진행 시 SSE로 프론트에 전송)
     const customerId = req.isAuthenticated?.() ? (req.user?.customer_id ?? null) : null;
     const result = await processAICC(message, caseId, storeId, customerId, res);
 
@@ -328,7 +328,7 @@ router.post("/", async (req, res) => {
       client.release();
     }
   }
-    console.error("Bedrock 호출 오류:", err);
+    console.error("LLM 호출 오류:", err);
 
     // SSE가 이미 시작됐으면 SSE로 에러 전송, 아니면 JSON
     if (res.headersSent) {
@@ -337,7 +337,7 @@ router.post("/", async (req, res) => {
     }
     return res.status(500).json({
       ok: false,
-      error: "Bedrock 호출 중 오류가 발생했습니다.",
+      error: "LLM 호출 중 오류가 발생했습니다.",
       detail: err.message ?? String(err),
     });
   }
@@ -541,7 +541,7 @@ router.post("/:case_id/close", async (req, res) => {
  *                  type: string
  *                  example: "case_id는 양의 정수여야 합니다."
  *      500:
- *        description: "DB 조회 또는 Bedrock 호출 중 서버 내부 오류"
+ *        description: "DB 조회 또는 LLM 호출 중 서버 내부 오류"
  *        content:
  *          application/json:
  *            schema:
