@@ -4,55 +4,11 @@ import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
 import pool from "./db.js";
 import axios from 'axios';
 
+import { invokePrompt } from "./llm/client.js";
 import { findSimilarContext } from "./services/searchService.js";
-
-const region = process.env.AWS_REGION || "ap-northeast-2";
-const apiKey = process.env.BEDROCK_API_KEY;
-
-// AWS SDK 클라이언트 초기화
-const credentials = {
-  accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-  secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
-};
 
 // PostgreSQL 체크포인터
 const checkpointer = new PostgresSaver(pool);
-
-
-
-// Bedrock 프롬프트 관리 호출 (Fetch 기반)
-async function invokePrompt(arn, inputs) {
-  if (!arn) throw new Error(`ARN이 설정되지 않았습니다.`);
-  if (!apiKey) throw new Error("BEDROCK_API_KEY(ABSK)가 없습니다.");
-
-  const url = `https://bedrock-runtime.${region}.amazonaws.com/model/${encodeURIComponent(arn)}/converse`;
-
-  const promptVariables = {};
-  for (const [key, value] of Object.entries(inputs)) {
-    promptVariables[key] = { text: String(value || "정보 없음") };
-  }
-
-  console.log(`📡 [Fetch] 프롬프트 호출 중: ${arn.split('/').pop()}`);
-
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({ 
-      promptVariables
-    }),
-  });
-
-  if (!res.ok) {
-    const errorBody = await res.text();
-    throw new Error(`Bedrock HTTP ${res.status}: ${errorBody}`);
-  }
-
-  const data = await res.json();
-  return data.output.message.content.find(c => c.text)?.text || "";
-}
 
 
 // pgvector 조회 — 해당 가게 매뉴얼에서 유사도 검색
@@ -91,20 +47,18 @@ const graphState = {
 const guardrailNode = async (state) => {
   // 노드 1: 가드레일
   console.log(`\n🔍 [Node 1: Guardrail] 검사 시작...`);
-  const guardrailId = process.env.BEDROCK_GUARDRAIL_ARN.split('/').pop();
-  const url = `https://bedrock-runtime.${region}.amazonaws.com/guardrail/${guardrailId}/version/DRAFT/apply`;
-
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
-    body: JSON.stringify({
-      source: "INPUT",
-      content: [{ text: { text: state.userQuery } }]
-    }),
+  const res = await invokePrompt("guardrail", {
+    user_input: state.userQuery
   });
 
-  const data = await res.json();
-  if (data.action === "GUARDRAIL_INTERVENED") {
+  let data = null;
+  try {
+    data = JSON.parse(res.match(/\{[\s\S]*\}/)?.[0] || "null");
+  } catch (err) {
+    console.error("[Guardrail] JSON 파싱 실패:", err.message);
+  }
+
+  if (data?.status === "REJECT") {
     console.error(`🚨 [Node 1: Guardrail] 부적절한 요청 차단됨`);
     throw new Error("GUARDRAIL_BLOCKED");
   }
@@ -120,7 +74,7 @@ const memoryLoaderNode = async (state) => {
   );
   const historyText = rows.reverse().map(r => `${r.speaker}: ${r.content}`).join("\n");
 
-  const summary = await invokePrompt(process.env.BEDROCK_MEMORY_LOADER_ARN, { 
+  const summary = await invokePrompt("memoryLoader", {
     past_logs: historyText || "이전 맥락 없음",
     user_input: state.userQuery 
   });
@@ -134,7 +88,7 @@ const supervisorNode = async (state) => {
     year: 'numeric', month: 'long', day: 'numeric', weekday: 'long',
     timeZone: 'Asia/Seoul'
   });
-  const raw = await invokePrompt(process.env.BEDROCK_SUPERVISOR_ARN, {
+  const raw = await invokePrompt("supervisor", {
     user_input: state.userQuery,
     context: state.historySummary,
     category: state.category || "없음",
@@ -271,7 +225,7 @@ const apiNode = async (state) => {
   while (iterations < maxIterations) {
     console.log(`   --- [회차 ${iterations + 1} / ${maxIterations}] ---`);
     
-    const rawParams = await invokePrompt(process.env.BEDROCK_API_ARN, { 
+    const rawParams = await invokePrompt("apiAgent", {
       user_input: state.userQuery,
       case_id: state.caseId,
       api_docs: apiSpec,
@@ -358,7 +312,7 @@ const apiNode = async (state) => {
 const ragNode = async (state) => {
   console.log(`📚 [Node 5: RAG Agent] 지식 검색 중...`);
   const docs = await retrieveKB(state.userQuery, state.storeId);
-  const res = await invokePrompt(process.env.BEDROCK_RAG_ARN, { 
+  const res = await invokePrompt("ragAgent", {
     user_query: state.userQuery,
     retrieved_context: docs 
   });
@@ -709,7 +663,7 @@ const storeNode = async (state) => {
 const composerNode = async (state) => {
   console.log(`✍️ [Node 8/9: Composer] 답변 및 추천 질문 구성 중...`);
   
-  const res = await invokePrompt(process.env.BEDROCK_COMPOSER_ARN, {
+  const res = await invokePrompt("composer", {
     user_input: state.userQuery,
     source_data: state.sourceData,
     history: state.historySummary
@@ -907,7 +861,7 @@ export async function processAICC(userQuery, caseId, storeId, customerId, res) {
 
 // 상담 분석
 export async function analyzeCaseConversation(conversationText, storeCategory = null) {
-  const res = await invokePrompt(process.env.BEDROCK_CASE_WRITER_ARN, {
+  const res = await invokePrompt("caseWriter", {
     conversation_text: conversationText,
     store_category: storeCategory || "없음"
   });
@@ -922,7 +876,7 @@ export async function analyzeSolutions(statsText, summaryText) {
   const params = { stats: statsText, summary_data: summaryText };
 
   for (let attempt = 0; attempt < 2; attempt++) {
-    const res = await invokePrompt(process.env.BEDROCK_SOLUTION_ANALYZER_ARN, params);
+    const res = await invokePrompt("solutionAnalyzer", params);
     try {
       // JSON 블록 추출 (```json ... ``` 또는 { ... } 패턴)
       const cleaned = res.replace(/```json\s*/g, '').replace(/```\s*/g, '');
