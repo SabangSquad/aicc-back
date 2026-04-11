@@ -1,5 +1,95 @@
 # 변경 이력
 
+## 2026-04-11
+
+### 예약 inquiry/action 분리 + 비로그인 예약 차단 + 타임존/톤 개선
+
+1. **예약 intent 세분화 — reservation_type: inquiry / action**
+
+   - Supervisor 프롬프트에 `reservation_type` 필드 추가 (`inquiry` | `action`)
+   - 행동 동사(할래/할게/하고 싶어/해줘/잡아줘 등) 포함 시 `action`, 그 외는 `inquiry`
+   - 직전 턴이 inquiry였고 현재 메시지가 시간/날짜만 있으면 action으로 승격
+   - 애매하면 inquiry로 보수적 분류
+   - Supervisor가 누락하거나 잘못 분류해도 코드에서 안전장치 (정규식 fallback)
+2. **storeNode 예약 처리 분기**
+
+   - `inquiry` → 텍스트로만 안내, 폼/availableSlots 프론트에 안 보냄
+   - `action` + 비로그인 → `login_required` 응답, 로그인 메시지에 가능한 시간 참고로 포함
+   - `action` + 로그인 → `showReservationForm: true` + `availableSlots` 전달
+3. **inquiry/action Composer 지시사항 구분**
+
+   - inquiry: 구체적 영업시간 인용 + "예약을 원하시면 말씀해 주세요"로 마무리, "채팅창에서 바로 예약" 문구 금지
+   - action: 가능한 시간 안내 + "채팅창에서 바로 예약하실 수 있습니다" 유도
+4. **login_required 메시지 톤 개선**
+
+   - "~합니다" → "~해요, 로그인해주시면 바로 잡아드릴게요!"
+   - 날짜/시간 한국식 포맷 ("2026-07-30 04:00" → "7월 30일 04:00~09:00")
+   - 연속된 시간대는 범위로 묶어서 표시
+   - 날짜별로 줄 나누고 최대 3일치만 표시
+5. **타임존 버그 수정 (availableSlots 날짜 한 일 밀림)**
+
+   - `toISOString().split('T')[0]`이 UTC 기준으로 날짜를 뽑아서 KST 7/30이 7/29로 표시되던 문제
+   - `toLocalDateStr` 헬퍼로 로컬 날짜 포맷 사용
+6. **LangGraph 체크포인트 상태 carry-over 버그 수정**
+
+   - thread_id = caseId로 같아서, 이전 턴의 `finalAnswer="__LOGIN_REQUIRED__"`가 다음 턴에 남아있어 composer가 스킵되는 문제
+   - 증상: "content 컬럼 NOT NULL 위반" DB 에러
+   - 수정: `app.stream()` 호출 시 초기 state에 모든 필드를 명시적으로 null로 리셋
+7. **store 노드 조건부 엣지 추가**
+
+   - `__LOGIN_REQUIRED__` 감지 시 composer 건너뛰고 END로
+
+---
+
+## 2026-04-10
+
+### 예약 가능 시간 계산, 단일 세션 보장, 상담 품질 score, 분류 정확도 개선
+
+1. **예약 가능 시간 슬롯 계산 (LLM 기반 날짜 추출)**
+
+   - Supervisor 프롬프트에 `{{today}}` 주입 → "내일", "이번 주", "월요일" 등 자연어 날짜를 LLM이 직접 추출
+   - storeNode에서 business_hours - 예약된 시간 차집합으로 availableSlots 계산
+   - 비로그인도 "예약 언제 가능해?" 조회 가능
+2. **로그인 시 상담 단일 세션 보장**
+
+   - 로그인 전환 시 DB에서 해당 customer의 기존 활성 케이스 복원
+   - 비로그인으로 진행 중이던 케이스는 자동 종료 (중복 세션 방지)
+   - 멀티탭/재로그인 시 케이스 충돌 해결
+3. **고객 로그인 시 /chat 리다이렉트 (role 기반 분기)**
+
+   - CUSTOMER → `/chat`
+   - OWNER/ADMIN → `/home`
+4. **Solution에 상담 품질 score 추가**
+
+   - AI 자동해결률 40% + 부정감정 역수 30% + 만족도 30% 가중합
+   - 0~100 점수 + 등급 반환
+5. **이커머스 상품 키워드 추출 후 DB 검색**
+
+   - Supervisor가 상품 키워드 추출 → DB 상품 목록과 대조
+   - 없는 항목은 프롬프트에서 명시적으로 거절
+6. **escalate 시 비로그인 → 로그인 유도**
+
+   - 환불/교환/주문취소 등 개인정보 필요한 escalate는 로그인 먼저 요구
+7. **Solution 0건일 때 404 → 200 빈 결과 반환**
+
+   - 상담 케이스 없는 신규 가게에서 프론트 에러 방지
+8. **분류 정확도 수정 (fix)**
+
+   - "예약 취소 규정" 등 규정 질문이 api로 잘못 가던 문제 → rag로 분류
+   - 긴 메시지에 "예약" 키워드 섞인 경우 업종 오판 문제 → intent 기반 체크로 전환
+   - 모호한 질문("그거 어떻게 돼?")은 AI 추측 대신 재질문하도록 Composer 지침 추가
+
+---
+
+## 2026-04-08
+
+### 배포 준비
+
+- health 엔드포인트 추가 (권한 적용 전 체크용)
+- Dockerfile / CI-CD 설정 수정
+
+---
+
 ## 2026-04-06
 
 ### 채팅 분류 전면 개선 + 자동 종료 status 분리 + 예약 showReservationForm

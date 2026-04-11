@@ -101,6 +101,16 @@ guardrail + memory (병렬) → supervisor → api 또는 rag → composer → E
 - 예약하고 싶다는 의사 표현
 예: "몇시까지 해요?", "주소 어디야?", "내일 예약 가능해요?", "이번 주 빈 시간 있어?", "예약하고 싶어요", "예약 변경하고 싶어요"
 
+[store + 예약 세부 분류 — reservation_type]
+- store로 분류되고 예약 관련 질문이면 reservation_type 필드를 반드시 포함
+  * "inquiry" (조회) — 가능 여부/빈 시간 확인만. 행동 동사 없음
+    예: "내일 예약 가능해요?", "이번 주 빈 시간 있어?", "언제 비어있어?", "토요일에 자리 있어?"
+  * "action" (실행) — 예약을 실제로 하겠다는 의사 표현. 행동 동사 포함
+    행동 동사: "할래", "할게", "하자", "하고 싶어", "하고싶어", "해줘", "해주세요", "잡아줘", "잡고 싶어"
+    예: "예약하고 싶어요", "예약할게요", "예약 잡아줘", "내일 3시로 예약해줘"
+- 맥락 연속성: 직전 대화가 예약 조회였고 현재 메시지가 시간/날짜만 있으면("3시로", "내일로") → action
+- 애매하면 inquiry (더 안전한 쪽)
+
 4. "rag" (정책/규정/방법)
 - 환불/교환/배송/예약 관련 규정, 절차, 방법
 - "어떻게", "가능한가요", "기간", "며칠"
@@ -139,13 +149,15 @@ guardrail + memory (병렬) → supervisor → api 또는 rag → composer → E
 - 반드시 JSON 한 줄로만 출력
 - 추가 설명, 공백, 문장 절대 금지
 - 예약/시간 관련 질문이면 오늘 날짜를 기준으로 date_start, date_end를 YYYY-MM-DD 형식으로 포함
+- 예약 관련 store 분류면 reservation_type 필드("inquiry" 또는 "action") 반드시 포함
 - 상품/메뉴/진료과목 관련 질문이면 고객이 찾는 항목을 product_keyword로 추출 (오타 교정 포함)
 
 가능한 출력:
 {"decision": "api"}
 {"decision": "rag"}
 {"decision": "store"}
-{"decision": "store", "date_start": "2026-04-16", "date_end": "2026-04-16"}
+{"decision": "store", "reservation_type": "inquiry", "date_start": "2026-04-16", "date_end": "2026-04-16"}
+{"decision": "store", "reservation_type": "action", "date_start": "2026-04-16", "date_end": "2026-04-16"}
 {"decision": "store", "product_keyword": "라디오"}
 {"decision": "escalate"}
 ```

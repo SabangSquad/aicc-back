@@ -466,10 +466,19 @@ router.get('/:store_id/orders', isStoreOwner, async (req, res) => {
  *     responses:
  *       200: { description: "예약 목록" }
  */
-router.get('/:store_id/reservations', isStoreOwner, async (req, res) => {
+router.get('/:store_id/reservations', async (req, res) => {
   try {
     const storeId = parseInt(req.params.store_id, 10);
     if (Number.isNaN(storeId)) return res.status(400).json({ error: '유효하지 않은 가게 ID입니다.' });
+
+    // customer_id는 해당 가게 오너/관리자/내부호출에만 노출 (그 외에는 공개 조회 허용)
+    const internalSecret = req.headers['x-internal-secret'];
+    const isInternal = internalSecret === process.env.INTERNAL_SECRET_KEY;
+    const user = req.isAuthenticated?.() ? req.user : null;
+    const isAuthorizedCaller =
+      isInternal ||
+      user?.role === 'ADMIN' ||
+      (user?.role === 'OWNER' && user.store_id === storeId);
 
     const { status, start, end } = req.query;
     const { page, limit, offset } = parsePagination(req.query);
@@ -484,8 +493,11 @@ router.get('/:store_id/reservations', isStoreOwner, async (req, res) => {
     const countRes = await pool.query(`SELECT COUNT(*)::int FROM reservations WHERE ${where}`, params);
     const total = countRes.rows[0].count;
 
+    const selectCols = isAuthorizedCaller
+      ? 'reservation_id, store_id, customer_id, reserved_at, status, headcount'
+      : 'reservation_id, store_id, reserved_at, status, headcount';
     const { rows } = await pool.query(
-      `SELECT reservation_id, store_id, customer_id, reserved_at, status, headcount
+      `SELECT ${selectCols}
        FROM reservations WHERE ${where} ORDER BY reserved_at DESC
        LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
       [...params, limit, offset]

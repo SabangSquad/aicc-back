@@ -81,6 +81,7 @@ const graphState = {
     dateStart: null,
     dateEnd: null,
     productKeyword: null,
+    reservationType: null,
     reason: null,
     retryCount: null,
   }
@@ -145,6 +146,7 @@ const supervisorNode = async (state) => {
   let dateStart = null;
   let dateEnd = null;
   let productKeyword = null;
+  let reservationType = null;
   if (jsonMatch) {
     try {
       const parsed = JSON.parse(jsonMatch[0]);
@@ -152,6 +154,7 @@ const supervisorNode = async (state) => {
       dateStart = parsed.date_start || null;
       dateEnd = parsed.date_end || null;
       productKeyword = parsed.product_keyword || null;
+      reservationType = parsed.reservation_type || null;
     } catch (e) { console.error("JSON 파싱 실패"); }
   }
   // 업종별 제약 체크 — Supervisor intent + 핵심 키워드 기반
@@ -220,8 +223,24 @@ const supervisorNode = async (state) => {
     console.log(`   └─ ⚠️ 알 수 없는 intent "${intent}" → rag로 처리`);
     intent = "rag";
   }
-  console.log(`   └─ ✅ 최종 결정: [${intent.toUpperCase()}]${dateStart ? ` 날짜: ${dateStart}~${dateEnd}` : ''}${productKeyword ? ` 상품: ${productKeyword}` : ''}`);
-  return { intent, dateStart, dateEnd, productKeyword };
+
+  // reservation_type 확정 — 모든 intent 전환 끝난 후 마지막에 판정
+  if (intent === 'store') {
+    const isReservationQuery = !!q.match(/예약|언제|가능|빈|비어|자리/);
+    if (isReservationQuery) {
+      if (!reservationType) {
+        const actionVerbs = /할래|할게|하자|하고\s*싶|해줘|해주세요|잡아|잡고\s*싶/;
+        reservationType = actionVerbs.test(q) ? 'action' : 'inquiry';
+      }
+    } else {
+      reservationType = null;
+    }
+  } else {
+    reservationType = null;
+  }
+
+  console.log(`   └─ ✅ 최종 결정: [${intent.toUpperCase()}]${dateStart ? ` 날짜: ${dateStart}~${dateEnd}` : ''}${productKeyword ? ` 상품: ${productKeyword}` : ''}${reservationType ? ` 예약타입: ${reservationType}` : ''}`);
+  return { intent, dateStart, dateEnd, productKeyword, reservationType };
 };
 
 // 노드 4: API Agent
@@ -532,7 +551,8 @@ const storeNode = async (state) => {
     }
 
     // 예약 관련 질문이면 해당 기간 예약 현황 조회 + 빈 슬롯 계산
-    const isReservationQuery = !!state.userQuery.match(/예약|언제|가능|빈|비어/);
+    const reservationType = state.reservationType; // 'inquiry' | 'action' | null
+    const isReservationQuery = !!reservationType;
     let availableSlots = null;
 
     if (isReservationQuery) {
@@ -556,10 +576,12 @@ const storeNode = async (state) => {
           url: `${process.env.ROOT_URL}/stores/${state.storeId}/reservations?start=${startStr}&end=${endStr}`,
           headers
         });
+        const toLocalDateStr = (d) =>
+          `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
         const reservations = (reservRes.data?.data || []).filter(r => r.status === '완료');
         const bookedTimes = new Set(reservations.map(r => {
           const d = new Date(r.reserved_at);
-          return `${d.toISOString().split('T')[0]}_${d.getHours()}`;
+          return `${toLocalDateStr(d)}_${d.getHours()}`;
         }));
 
         // 영업시간에서 빈 슬롯 계산
@@ -576,7 +598,7 @@ const storeNode = async (state) => {
               const [openStr, closeStr] = timeRange.split('-');
               const openHour = parseInt(openStr.split(':')[0]);
               const closeHour = parseInt(closeStr.split(':')[0]);
-              const dateStr = current.toISOString().split('T')[0];
+              const dateStr = toLocalDateStr(current);
               for (let h = openHour; h < closeHour; h++) {
                 const key = `${dateStr}_${h}`;
                 if (!bookedTimes.has(key)) {
@@ -600,16 +622,80 @@ const storeNode = async (state) => {
         } else {
           info += `\n${label} 예약된 시간: 없음 (전 시간 가능)`;
         }
-        info += `\n(고객에게 영업시간과 예약 현황을 비교하여 가능한 시간을 안내해주세요)`;
+
+        // 해당 기간 일자별 영업시간을 명시적으로 추출 (Composer가 쉽게 인용하도록)
+        if (bh) {
+          const hours = typeof bh === 'string' ? JSON.parse(bh) : bh;
+          const dayKeys = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+          const dayNames = ['일', '월', '화', '수', '목', '금', '토'];
+          const dayLines = [];
+          const cur = new Date(start);
+          while (cur <= end) {
+            const dk = dayKeys[cur.getDay()];
+            const dn = dayNames[cur.getDay()];
+            const tr = hours[dk];
+            dayLines.push(`${cur.getMonth()+1}월 ${cur.getDate()}일(${dn}) ${tr === 'off' ? '휴무' : tr}`);
+            cur.setDate(cur.getDate() + 1);
+          }
+          info += `\n해당 기간 영업시간: ${dayLines.join(', ')}`;
+        }
+
+        // reservation_type별 Composer 지시사항
+        if (reservationType === 'inquiry') {
+          info += `\n(지시: 고객이 예약 가능 여부만 확인하는 조회 질문입니다. 해당 일자의 영업시간과 예약 현황을 구체적으로 안내하고, "예약을 원하시면 말씀해 주세요"로 마무리하세요. "채팅창에서 바로 예약하실 수 있습니다" 문구는 사용하지 마세요.)`;
+        } else if (reservationType === 'action') {
+          info += `\n(지시: 고객이 예약을 진행하려는 질문입니다. 가능한 시간을 안내하고 "채팅창에서 바로 예약하실 수 있습니다"로 마무리하세요.)`;
+        }
       } catch (e) {
         console.error('[Store] 예약 현황 조회 실패:', e.message);
       }
     }
 
+    // 예약 action + 비로그인 → 로그인 유도 (가능한 시간은 참고로 함께 전달)
+    if (reservationType === 'action' && !state.customerId) {
+      console.log(`   └─ 🔒 예약 진행 — 로그인 필요`);
+      let loginMessage = "예약을 진행하시려면 로그인이 필요해요. 로그인해주시면 바로 잡아드릴게요!";
+      if (availableSlots && availableSlots.length > 0) {
+        // 날짜별로 묶고, 연속된 시간대는 범위로 표시
+        const byDate = {};
+        for (const s of availableSlots) {
+          if (!byDate[s.date]) byDate[s.date] = [];
+          byDate[s.date].push(parseInt(s.time));
+        }
+        const formatRanges = (hours) => {
+          hours.sort((a, b) => a - b);
+          const ranges = [];
+          let s = hours[0], prev = hours[0];
+          for (let i = 1; i < hours.length; i++) {
+            if (hours[i] === prev + 1) {
+              prev = hours[i];
+            } else {
+              ranges.push(s === prev ? `${String(s).padStart(2,'0')}:00` : `${String(s).padStart(2,'0')}:00~${String(prev+1).padStart(2,'0')}:00`);
+              s = prev = hours[i];
+            }
+          }
+          ranges.push(s === prev ? `${String(s).padStart(2,'0')}:00` : `${String(s).padStart(2,'0')}:00~${String(prev+1).padStart(2,'0')}:00`);
+          return ranges.join(', ');
+        };
+        const lines = Object.entries(byDate).slice(0, 3).map(([date, hours]) => {
+          const [, m, d] = date.split('-');
+          return `${parseInt(m)}월 ${parseInt(d)}일: ${formatRanges(hours)}`;
+        });
+        loginMessage += `\n\n참고로 가능한 시간은 아래와 같아요.\n${lines.join('\n')}`;
+      }
+      return {
+        finalAnswer: "__LOGIN_REQUIRED__",
+        loginMessage,
+        suggestedQuestions: []
+      };
+    }
+
     return {
       sourceData: info,
-      showReservationForm: isReservationQuery,
-      availableSlots
+      // 폼은 action + 로그인 상태에서만 (inquiry는 텍스트 답변만)
+      showReservationForm: reservationType === 'action',
+      // availableSlots도 폼 띄울 때만 프론트에 전달
+      availableSlots: reservationType === 'action' ? availableSlots : null
     };
   } catch (err) {
     console.error('[Store] 가게 정보 조회 실패:', err.message);
@@ -688,7 +774,10 @@ workflow.addConditionalEdges("api", (state) => {
   return "composer";
 }, { end: END, composer: "composer" });
 workflow.addEdge("rag", "composer");
-workflow.addEdge("store", "composer");
+workflow.addConditionalEdges("store", (state) => {
+  if (state.finalAnswer === "__LOGIN_REQUIRED__") return "end";
+  return "composer";
+}, { end: END, composer: "composer" });
 workflow.addEdge("escalate", END);
 workflow.addEdge("composer", END);
 
@@ -718,8 +807,24 @@ export async function processAICC(userQuery, caseId, storeId, customerId, res) {
     const startTime = Date.now();
     const config = { configurable: { thread_id: String(caseId) } };
 
+    // 이전 체크포인트의 상태가 carry-over 되지 않도록 턴마다 명시적으로 리셋
     const stream = await app.stream(
-      { userQuery, caseId, storeId, storeCategory, customerId, category, retryCount: 0 },
+      {
+        userQuery, caseId, storeId, storeCategory, customerId, category,
+        retryCount: 0,
+        intent: null,
+        sourceData: null,
+        retrievedContext: null,
+        finalAnswer: null,
+        loginMessage: null,
+        showReservationForm: null,
+        availableSlots: null,
+        dateStart: null,
+        dateEnd: null,
+        productKeyword: null,
+        reservationType: null,
+        reason: null,
+      },
       config
     );
 
