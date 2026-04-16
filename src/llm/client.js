@@ -42,5 +42,6 @@ export async function invokePrompt(promptId, variables = {}, options = {}) {
   }
 
   const res = await model.invoke(messages);
+  console.log(res.content);
   return getTextContent(res.content).trim();
 }

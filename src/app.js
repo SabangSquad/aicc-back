@@ -7,6 +7,7 @@ import { RedisStore } from 'connect-redis';  // 세션을 Redis에 저장
 import { createClient } from 'redis';
 import setupSwagger from './swagger.js';
 import pool from './db.js';
+import cors from 'cors';
 
 // 인증 및 미들웨어
 import { setupPassport } from './config/passport.js';
@@ -30,6 +31,10 @@ const app = express();
 app.set('trust proxy', 1);
 app.use(express.json({ type: ['application/json', 'application/merge-patch+json'] }));
 app.use(express.urlencoded({ extended: true }));
+app.use(cors({
+  origin: 'http://localhost:3001',
+  credentials: true,
+}));
 
 // 1. Redis + 세션 설정
 const redisClient = createClient({ url: process.env.REDIS_URL || 'redis://localhost:6379' });  // Redis 연결
