@@ -9,6 +9,10 @@ import { findSimilarContext } from "./services/searchService.js";
 
 // PostgreSQL 체크포인터
 const checkpointer = new PostgresSaver(pool);
+const internalApiBaseUrl = (
+  process.env.INTERNAL_API_BASE_URL ||
+  (process.env.NODE_ENV === "production" ? "http://aicc-back:4000" : process.env.ROOT_URL)
+).replace(/\/+$/, "");
 
 
 // pgvector 조회 — 해당 가게 매뉴얼에서 유사도 검색
@@ -258,7 +262,7 @@ const apiNode = async (state) => {
 
       // ID 값에서 중괄호 {} 제거
       const targetId = String(callInfo.i || state.caseId).replace(/\{|\}/g, "");
-      let targetUrl = `${process.env.ROOT_URL}/${callInfo.r}`;
+      let targetUrl = `${internalApiBaseUrl}/${callInfo.r}`;
       
       // 경로 중복 방지
       if (targetId !== "null" && !callInfo.r.includes(targetId)) {
@@ -474,13 +478,13 @@ const storeNode = async (state) => {
   try {
     const headers = { "x-internal-secret": process.env.INTERNAL_SECRET_KEY, "Content-Type": "application/json" };
 
-    const storeRes = await axios({ method: 'GET', url: `${process.env.ROOT_URL}/stores/${state.storeId}`, headers });
+    const storeRes = await axios({ method: 'GET', url: `${internalApiBaseUrl}/stores/${state.storeId}`, headers });
     let info = formatStoreInfo(storeRes.data);
 
     // 이커머스 상품 조회 — keyword 있으면 ILIKE 검색, 없으면 전체(최대 20개)
     if (state.storeCategory === '이커머스') {
       try {
-        const prodRes = await axios({ method: 'GET', url: `${process.env.ROOT_URL}/stores/${state.storeId}/products`, headers });
+        const prodRes = await axios({ method: 'GET', url: `${internalApiBaseUrl}/stores/${state.storeId}/products`, headers });
         let products = prodRes.data?.data || [];
 
         if (state.productKeyword) {
@@ -529,7 +533,7 @@ const storeNode = async (state) => {
         const endStr = end.toISOString();
         const reservRes = await axios({
           method: 'GET',
-          url: `${process.env.ROOT_URL}/stores/${state.storeId}/reservations?start=${startStr}&end=${endStr}`,
+          url: `${internalApiBaseUrl}/stores/${state.storeId}/reservations?start=${startStr}&end=${endStr}`,
           headers
         });
         const toLocalDateStr = (d) =>
@@ -655,7 +659,10 @@ const storeNode = async (state) => {
     };
   } catch (err) {
     console.error('[Store] 가게 정보 조회 실패:', err.message);
-    return { sourceData: "가게 정보를 조회할 수 없습니다." };
+    return {
+      finalAnswer: "죄송합니다. 현재 가게 정보를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.",
+      suggestedQuestions: []
+    };
   }
 };
 
@@ -732,6 +739,7 @@ workflow.addConditionalEdges("api", (state) => {
 workflow.addEdge("rag", "composer");
 workflow.addConditionalEdges("store", (state) => {
   if (state.finalAnswer === "__LOGIN_REQUIRED__") return "end";
+  if (state.finalAnswer) return "end";
   return "composer";
 }, { end: END, composer: "composer" });
 workflow.addEdge("escalate", END);
