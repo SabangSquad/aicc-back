@@ -49,7 +49,16 @@ export const PROMPT_TEMPLATES = {
 [고객 질문] {{user_input}}
 [현재 상담 카테고리] {{category}}
 [가게 업종] {{store_category}}
-[오늘 날짜] {{today}}
+[오늘 날짜 (한국 표준시 KST, UTC+9)] {{today}}
+
+⚠️ 모든 날짜/시간은 반드시 KST(Asia/Seoul, UTC+9) 기준으로 해석/출력하세요.
+- "오늘" = 위 [오늘 날짜]에 명시된 날짜 (KST)
+- "내일" = [오늘 날짜] + 1일 (KST)
+- "모레" = [오늘 날짜] + 2일 (KST)
+- "이번 주" = [오늘 날짜]가 포함된 월~일 주간 (KST)
+- "다음 주" = 그 다음 월~일 주간 (KST)
+- date_start, date_end는 모두 KST 기준 YYYY-MM-DD 형식
+- UTC로 변환하지 말고, KST 날짜를 그대로 출력하세요
 
 --------------------------------
 [판단 우선순위 - 반드시 순서대로 적용]
@@ -152,16 +161,40 @@ export const PROMPT_TEMPLATES = {
 - GET cases/{case_id} — 상담 정보 (order_id, reservation_id 포함)
 - GET orders/{order_id} — 주문 정보
 - GET orders/{order_id}/items — 주문 품목
-- GET orders/{order_id}/shipments — 배송 정보
-- GET shipments/{shipment_id}/tracks — 배송 이력
+- GET orders/{order_id}/shipments — 주문의 배송 목록 (응답: {"data":[{"shipment_id":N, "tracking_no":..., "carrier":..., ...}]})
+- GET shipments/{shipment_id}/tracks — 배송 이력 (shipment_id는 위 shipments 응답의 data[0].shipment_id 사용)
 - GET customers/{customer_id} — 고객 정보
 - GET reservations/{reservation_id} — 예약 정보
 - GET products/{product_id} — 상품 정보
 
+[ID 체인 가이드 - 매우 중요]
+이전 호출 결과(context)를 반드시 확인하고 거기서 다음 호출에 필요한 ID를 추출하세요.
+
+배송 이력 조회 흐름 (3단계):
+1. cases/{case_id} → 응답에서 order_id 추출
+2. orders/{order_id}/shipments → 응답의 data[0].shipment_id 추출
+3. shipments/{shipment_id}/tracks → 배송 이력 획득
+
+단순 배송 상태(어디까지 왔는지)만 묻는 경우 2단계까지로도 충분 (shipments 응답에 tracking_no, carrier, delivered_at 포함).
+
+[경로(r)와 ID(i) 작성 규칙 - 매우 중요]
+경로에 ID가 들어가면 반드시 실제 ID 값으로 치환해서 r에 넣으세요. {shipment_id} 같은 플레이스홀더 절대 사용 금지.
+
+올바른 예:
+- {"r": "cases/15", "i": "15", "m": "GET", "p": {}}
+- {"r": "orders/8", "i": "8", "m": "GET", "p": {}}
+- {"r": "orders/8/shipments", "i": "8", "m": "GET", "p": {}}
+- {"r": "orders/8/items", "i": "8", "m": "GET", "p": {}}
+- {"r": "shipments/3/tracks", "i": "3", "m": "GET", "p": {}}  ← shipment_id=3은 이전 shipments 응답에서 추출
+
+잘못된 예 (절대 이렇게 하지 마세요):
+- {"r": "shipments/{shipment_id}/tracks", "i": "3"}  ← 플레이스홀더 사용 금지
+- {"r": "shipments", "i": "3/tracks"}  ← ID 필드에 경로 섞기 금지
+
 반드시 아래 JSON 형식 중 하나로만 응답하세요:
 
 API 호출이 필요한 경우:
-{"r": "경로(예: cases)", "i": "ID값", "m": "GET", "p": {}}
+{"r": "실제 ID가 치환된 전체 경로", "i": "주된 ID값", "m": "GET", "p": {}}
 
 충분한 정보를 확보한 경우:
 {"action": "finish"}

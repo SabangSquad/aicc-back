@@ -1,5 +1,33 @@
 # 변경 이력
 
+## 2026-04-25
+
+### Supervisor KST 명시 + API Agent 배송 체인 개선
+
+1. **Supervisor 프롬프트 KST 타임존 명시**
+
+   - "현재 LLM이 예약시간을 KST 기준으로 처리하지 않음" 이슈 대응
+   - `[오늘 날짜]` 라벨에 `(한국 표준시 KST, UTC+9)` 명시
+   - 상대 표현(오늘/내일/모레/이번 주/다음 주) 모두 KST 기준 해석하도록 규칙 추가
+   - `date_start`, `date_end`는 UTC 변환 없이 KST 기준 YYYY-MM-DD로 출력 강제
+2. **API Agent 프롬프트 배송 체인 가이드 보강**
+
+   - "주문 → 배송으로 넘어갈 때 shipment_id를 알 방법이 없음" 이슈 대응
+   - `cases → orders/{order_id}/shipments → shipments/{shipment_id}/tracks` 3단계 체인 명시
+   - `orders/{order_id}/shipments` 응답 구조(`{data:[{shipment_id, ...}]}`) 프롬프트에 노출
+   - 이전 호출 결과(context)에서 `shipment_id` 추출하라는 가이드 추가
+   - 단순 배송 상태 조회는 2단계까지로 충분하다는 분기 안내
+3. **API Agent 경로(r)/ID(i) 작성 규칙 명시**
+
+   - LLM이 `{shipment_id}` 같은 플레이스홀더를 그대로 출력하던 문제 방지
+   - 올바른 예/잘못된 예를 프롬프트에 직접 나열 (실제 ID로 치환된 전체 경로 사용)
+4. **API Agent 반복 호출 한도 상향 (2 → 4)**
+
+   - `bedrock.js`의 `maxIterations`가 2였던 탓에 3단계 배송 체인 마지막 단계에 도달 못 하던 문제
+   - 4회로 늘려서 체인 완결 + 한 번의 재시도 여유 확보
+
+---
+
 ## 2026-04-11
 
 ### 예약 inquiry/action 분리 + 비로그인 예약 차단 + 타임존/톤 개선

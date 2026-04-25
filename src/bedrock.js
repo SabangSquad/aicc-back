@@ -224,7 +224,7 @@ const apiNode = async (state) => {
   
   let accumulatedContext = "아직 호출된 API 없음";
   let iterations = 0;
-  const maxIterations = 2;
+  const maxIterations = 4;
 
   while (iterations < maxIterations) {
     console.log(`   --- [회차 ${iterations + 1} / ${maxIterations}] ---`);
