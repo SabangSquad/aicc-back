@@ -38,6 +38,7 @@ const graphState = {
     loginMessage: null,
     showReservationForm: null,
     availableSlots: null,
+    shipmentInfo: null,
     dateStart: null,
     dateEnd: null,
     productKeyword: null,
@@ -221,8 +222,9 @@ const apiNode = async (state) => {
   }
 
   const apiSpec = await retrieveKB(state.userQuery, state.storeId);
-  
+
   let accumulatedContext = "아직 호출된 API 없음";
+  let shipmentInfo = null;
   let iterations = 0;
   const maxIterations = 4;
 
@@ -282,7 +284,7 @@ const apiNode = async (state) => {
       });
 
       console.log(`   └─ 🟢 [성공] ${callInfo.r} 데이터 획득`);
-      
+
       // cases 조회 시 summary가 AI를 방해하지 않도록 처리
       let filteredData = res.data;
       if (callInfo.r === 'cases' || callInfo.r === 'case') {
@@ -291,6 +293,20 @@ const apiNode = async (state) => {
           ...rest,
           _note: "summary는 과거 상담 요약입니다. 무시하고 order_id 또는 reservation_id를 추출하세요."
         };
+      }
+
+      // 배송 관련 응답에서 구조화 메타데이터 추출 (프론트 전달용)
+      if (/\/shipments$/.test(callInfo.r) || /shipments\/?$/.test(callInfo.r)) {
+        const shipment = Array.isArray(res.data?.data) ? res.data.data[0] : null;
+        if (shipment?.shipment_id) {
+          shipmentInfo = { ...(shipmentInfo || {}), ...shipment };
+        }
+      }
+      if (/\/tracks$/.test(callInfo.r)) {
+        const tracks = Array.isArray(res.data?.data) ? res.data.data : null;
+        if (tracks) {
+          shipmentInfo = { ...(shipmentInfo || {}), tracks };
+        }
       }
 
       const stepResult = `\n[${iterations + 1}회차 결과 - ${callInfo.r}]: ${JSON.stringify(filteredData)}`;
@@ -305,9 +321,10 @@ const apiNode = async (state) => {
     }
   }
 
-  return { 
-    sourceData: accumulatedContext, 
+  return {
+    sourceData: accumulatedContext,
     retrievedContext: apiSpec,
+    shipmentInfo,
     retryCount: (state.retryCount || 0) + 1
   };
 };
@@ -783,6 +800,7 @@ export async function processAICC(userQuery, caseId, storeId, customerId, res) {
         loginMessage: null,
         showReservationForm: null,
         availableSlots: null,
+        shipmentInfo: null,
         dateStart: null,
         dateEnd: null,
         productKeyword: null,
@@ -852,7 +870,8 @@ export async function processAICC(userQuery, caseId, storeId, customerId, res) {
       caseId: String(caseId),
       reason: INTENT_REASONS[finalState.intent] || "답변 완료",
       ...(finalState.showReservationForm && { showReservationForm: true }),
-      ...(finalState.availableSlots && { availableSlots: finalState.availableSlots })
+      ...(finalState.availableSlots && { availableSlots: finalState.availableSlots }),
+      ...(finalState.shipmentInfo && { shipmentInfo: finalState.shipmentInfo })
     };
 
     console.log(`\n🎁 [Final Response] 질문 유도형 응답 생성:`);

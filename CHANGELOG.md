@@ -25,6 +25,12 @@
 
    - `bedrock.js`의 `maxIterations`가 2였던 탓에 3단계 배송 체인 마지막 단계에 도달 못 하던 문제
    - 4회로 늘려서 체인 완결 + 한 번의 재시도 여유 확보
+5. **챗봇 응답에 `shipmentInfo` 메타데이터 추가**
+
+   - 기존에는 LLM이 추출한 `shipment_id`/송장번호/배송이력이 답변 텍스트에만 녹아 있어서 프론트가 구조화된 값으로 활용 불가
+   - `apiNode`에서 `orders/{id}/shipments`, `shipments/{id}/tracks` 응답을 별도 추적
+   - 응답 본문에 `shipmentInfo: { shipment_id, tracking_no, carrier, promised_at, delivered_at, tracks: [...] }` 형태로 포함
+   - 기존 `availableSlots`/`showReservationForm` 패턴과 동일한 방식 (LangGraph state + chat.js 라우터 통과)
 
 ---
 

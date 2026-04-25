@@ -314,6 +314,7 @@ router.post("/", async (req, res) => {
       caseId: caseId,
       ...(result.showReservationForm && { showReservationForm: true }),
       ...(result.availableSlots && { availableSlots: result.availableSlots }),
+      ...(result.shipmentInfo && { shipmentInfo: result.shipmentInfo }),
       _links: [{ rel: "self", href: "/chats", method: "POST" }]
     })}\n\n`);
 
