@@ -36,6 +36,13 @@
    - `items` 테이블만 조회해서 `product_id`만 넘어가던 응답에 `product_name` 추가
    - `products` 테이블 LEFT JOIN으로 상품명 조회 (상품이 삭제된 경우 `null`)
    - Swagger 응답 스키마도 명시적으로 업데이트
+7. **컬렉션 GET 엔드포인트의 빈 결과 응답 정상화 (404 → 200 + 빈 배열)**
+
+   - `GET /cases/{case_id}/messages`: 메시지가 없을 때 404 대신 `{data: []}`로 200 응답
+   - `GET /orders/{order_id}/items`: 품목이 없을 때 404 대신 `{data: []}`로 200 응답
+   - 빈 컬렉션은 RESTful 관점에서 정상 응답이며, 프론트가 try/catch 없이 일관된 처리 가능
+   - Swagger 주석에서 404 응답 항목 제거 + description에 빈 배열 응답 명시
+   - 단건 GET(`/orders/:id` 등)과 PATCH/DELETE의 404는 그대로 유지 (대상 부재는 진짜 에러)
 
 ---
 

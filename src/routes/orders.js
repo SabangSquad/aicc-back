@@ -262,7 +262,7 @@ router.get('/:order_id/shipments', async (req, res) => {
  * /orders/{order_id}/items:
  *   get:
  *     summary: "주문품목 목록 조회"
- *     description: "주문에 포함된 품목 목록을 반환합니다. products 테이블과 조인해 상품명(product_name)을 함께 제공합니다."
+ *     description: "주문에 포함된 품목 목록을 반환합니다. products 테이블과 조인해 상품명(product_name)을 함께 제공합니다. 품목이 없는 경우 빈 배열로 200 응답."
  *     tags: [Orders]
  *     parameters:
  *       - in: path
@@ -295,7 +295,6 @@ router.get('/:order_id/shipments', async (req, res) => {
  *                 _links:
  *                   type: array
  *                   items: { type: object }
- *       404: { description: "주문품목 없음" }
  *   post:
  *     summary: "주문품목 추가"
  *     tags: [Orders]
@@ -334,10 +333,6 @@ router.route('/:order_id/items')
          WHERE i.order_id = $1`,
         [orderId]
       );
-
-      if (rows.length === 0) {
-        return res.status(404).json({ error: '주문 품목을 찾을 수 없습니다.' });
-      }
 
       return res.json({
         data: rows,

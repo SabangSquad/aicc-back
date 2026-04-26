@@ -384,6 +384,7 @@ router.route('/:case_id/satisfactions')
  * /cases/{case_id}/messages:
  *   get:
  *     summary: "상담 메시지 조회"
+ *     description: "상담의 메시지 목록을 반환합니다. 메시지가 없는 경우 빈 배열로 200 응답."
  *     tags: [Cases]
  *     parameters:
  *       - in: path
@@ -391,8 +392,7 @@ router.route('/:case_id/satisfactions')
  *         required: true
  *         schema: { type: integer }
  *     responses:
- *       200: { description: "메시지 목록" }
- *       404: { description: "메시지 없음" }
+ *       200: { description: "메시지 목록 (없으면 빈 배열)" }
  *   post:
  *     summary: "상담 메시지 추가"
  *     tags: [Cases]
@@ -427,10 +427,6 @@ router.route('/:case_id/messages')
         'SELECT message_id, case_id, occurred_at, content, speaker FROM messages WHERE case_id = $1 ORDER BY occurred_at ASC',
         [caseId]
       );
-
-      if (rows.length === 0) {
-        return res.status(404).json({ error: '메시지를 찾을 수 없습니다.' });
-      }
 
       return res.json({
         data: rows,
