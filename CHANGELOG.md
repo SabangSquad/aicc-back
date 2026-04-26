@@ -2,7 +2,7 @@
 
 ## 2026-04-25
 
-### Supervisor KST 명시 + API Agent 배송 체인 개선
+### Supervisor KST 명시 + 배송 체인/메타데이터 + 주문 품목 상품명 노출
 
 1. **Supervisor 프롬프트 KST 타임존 명시**
 
@@ -31,6 +31,11 @@
    - `apiNode`에서 `orders/{id}/shipments`, `shipments/{id}/tracks` 응답을 별도 추적
    - 응답 본문에 `shipmentInfo: { shipment_id, tracking_no, carrier, promised_at, delivered_at, tracks: [...] }` 형태로 포함
    - 기존 `availableSlots`/`showReservationForm` 패턴과 동일한 방식 (LangGraph state + chat.js 라우터 통과)
+6. **`GET /orders/{order_id}/items` 응답에 상품명 포함**
+
+   - `items` 테이블만 조회해서 `product_id`만 넘어가던 응답에 `product_name` 추가
+   - `products` 테이블 LEFT JOIN으로 상품명 조회 (상품이 삭제된 경우 `null`)
+   - Swagger 응답 스키마도 명시적으로 업데이트
 
 ---
 

@@ -262,6 +262,7 @@ router.get('/:order_id/shipments', async (req, res) => {
  * /orders/{order_id}/items:
  *   get:
  *     summary: "주문품목 목록 조회"
+ *     description: "주문에 포함된 품목 목록을 반환합니다. products 테이블과 조인해 상품명(product_name)을 함께 제공합니다."
  *     tags: [Orders]
  *     parameters:
  *       - in: path
@@ -269,7 +270,31 @@ router.get('/:order_id/shipments', async (req, res) => {
  *         required: true
  *         schema: { type: integer }
  *     responses:
- *       200: { description: "주문품목 목록" }
+ *       200:
+ *         description: "주문품목 목록"
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       item_id: { type: integer, example: 1 }
+ *                       order_id: { type: integer, example: 8 }
+ *                       product_id: { type: integer, example: 12 }
+ *                       product_name:
+ *                         type: string
+ *                         nullable: true
+ *                         description: "상품명 (상품이 삭제됐으면 null)"
+ *                         example: "프리미엄 로스팅 원두 200g"
+ *                       quantity: { type: integer, example: 2 }
+ *                       total_price: { type: integer, example: 30000 }
+ *                 _links:
+ *                   type: array
+ *                   items: { type: object }
  *       404: { description: "주문품목 없음" }
  *   post:
  *     summary: "주문품목 추가"
@@ -302,8 +327,11 @@ router.route('/:order_id/items')
       }
 
       const { rows } = await pool.query(
-        `SELECT item_id, order_id, product_id, quantity, total_price
-         FROM items WHERE order_id = $1`,
+        `SELECT i.item_id, i.order_id, i.product_id, p.name AS product_name,
+                i.quantity, i.total_price
+         FROM items i
+         LEFT JOIN products p ON p.product_id = i.product_id
+         WHERE i.order_id = $1`,
         [orderId]
       );
 
