@@ -57,6 +57,12 @@
    - 원인: `req.session.returnTo = ...` 직후 `passport.authenticate`가 즉시 302 응답을 보내서 Redis 저장이 완료되기 전에 Google로 떠남
    - 로컬은 Redis가 같은 머신이라 저장이 빨라서 우연히 동작했지만, production은 Redis가 다른 Pod라 네트워크 지연으로 저장이 응답보다 늦음
    - 해결: returnTo가 있을 때만 `req.session.save()` 콜백 안에서 `passport.authenticate` 호출하도록 변경
+10. **OAuth 콜백에서 `req.logIn` 호출 전에 returnTo 추출 (passport 0.6+ 세션 재생성 대응)**
+
+    - 증상: 9번 fix 적용 후에도 여전히 fallback `/chat`으로 감 (DevTools 확인: 쿠키는 정상 전달, 콜백 진입 OK)
+    - 원인: passport 0.6+는 `req.logIn` 호출 시 session fixation 방어를 위해 세션 ID를 재생성 → 기존 세션 데이터(returnTo 포함) 소실
+    - 해결: `passport.authenticate` 콜백 안에서 `req.logIn` 호출 **이전**에 `req.session.returnTo`를 변수로 추출
+    - 콜백 응답에서 세션 ID가 진입 시점과 다른 ID로 발급되는 현상은 정상 (재생성 결과)
 
 ---
 

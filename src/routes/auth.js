@@ -43,11 +43,12 @@ router.get('/google/callback', (req, res, next) => {
       });
     }
 
+    // passport 0.6+는 req.logIn에서 세션을 재생성하므로
+    // returnTo는 반드시 그 전에 읽어둬야 함
+    const savedReturnTo = req.session.returnTo;
+
     req.logIn(user, (err) => {
       if (err) return next(err);
-
-      const savedReturnTo = req.session.returnTo;
-      delete req.session.returnTo;
 
       req.session.save((err) => {
         if (err) return next(err);
