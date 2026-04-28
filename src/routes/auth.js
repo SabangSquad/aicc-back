@@ -95,4 +95,22 @@ router.get('/logout', (req, res, next) => {
   });
 });
 
+// [DEBUG ONLY — 검증 후 즉시 삭제] 배포 버전 마커
+router.get('/version', (req, res) => {
+  res.json({
+    marker: 'returnTo-fix-829ce9a',
+    file: 'src/routes/auth.js',
+    deployed: new Date().toISOString()
+  });
+});
+
+// [DEBUG ONLY — 검증 후 즉시 삭제] 세션 내용 확인
+router.get('/debug-session', (req, res) => {
+  res.json({
+    sessionID: req.sessionID,
+    session: req.session,
+    cookieHeader: req.headers.cookie || null
+  });
+});
+
 export default router;
