@@ -2,7 +2,7 @@
 
 ## 2026-04-25
 
-### Supervisor KST 명시 + 배송 체인/메타데이터 + 주문 품목 상품명 노출
+### Supervisor KST 명시 + 배송 체인/메타데이터 + 주문 품목 상품명 노출 + 컬렉션 응답 정규화 + OAuth returnTo 리다이렉트
 
 1. **Supervisor 프롬프트 KST 타임존 명시**
 
@@ -51,6 +51,12 @@
    - `isAllowedForRole()`: CUSTOMER는 `/chat` 경로만, 그 외 role은 `/chat`이 아닌 경로만 허용 (role-경로 충돌 시 안전한 fallback으로 라우팅)
    - 검증 실패 시 기존 fallback(`/chat` 또는 `/home`) 유지
    - 프론트 작업 필요: 로그인 진입점에서 현재 경로를 `returnTo` 쿼리로 붙여 호출
+9. **OAuth 진입 시 세션 저장 완료 대기 (Redis 경합 조건 해결)**
+
+   - 증상: production에서 `?returnTo=/chat/1`로 진입해도 콜백 후 fallback `/chat`으로 감
+   - 원인: `req.session.returnTo = ...` 직후 `passport.authenticate`가 즉시 302 응답을 보내서 Redis 저장이 완료되기 전에 Google로 떠남
+   - 로컬은 Redis가 같은 머신이라 저장이 빨라서 우연히 동작했지만, production은 Redis가 다른 Pod라 네트워크 지연으로 저장이 응답보다 늦음
+   - 해결: returnTo가 있을 때만 `req.session.save()` 콜백 안에서 `passport.authenticate` 호출하도록 변경
 
 ---
 

@@ -19,10 +19,17 @@ function isAllowedForRole(path, role) {
 }
 
 router.get('/google', (req, res, next) => {
+  const startAuth = () => passport.authenticate('google', { scope: ['profile', 'email'] })(req, res, next);
+
   if (req.query.returnTo && isSafePath(req.query.returnTo)) {
     req.session.returnTo = req.query.returnTo;
+    // Redis 저장 완료 후 Google 리다이렉트 (경합 방지)
+    return req.session.save((err) => {
+      if (err) return next(err);
+      startAuth();
+    });
   }
-  passport.authenticate('google', { scope: ['profile', 'email'] })(req, res, next);
+  startAuth();
 });
 
 router.get('/google/callback', (req, res, next) => {
