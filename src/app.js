@@ -75,15 +75,6 @@ app.use('/stores', storesRouter);  // GET /stores/:store_id는 공개, 나머지
 // 6. Health check (K8s liveness/readiness probe — 인증 불필요)
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
-// [DEBUG ONLY — 검증 후 즉시 삭제] 배포 검증용 공개 엔드포인트
-app.get('/_deploy-check', (req, res) => {
-  res.json({
-    marker: 'deploy-check-v1',
-    pushed_at: '2026-04-28T13:00:00Z',
-    note: '이 응답이 보이면 새 이미지가 적용된 것'
-  });
-});
-
 // 7. 권한 적용
 app.use(isAuthorized);
 app.use('/cases',        casesRouter);
