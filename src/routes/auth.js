@@ -3,26 +3,54 @@ import passport from 'passport';
 
 const router = express.Router();
 
-router.get('/google', passport.authenticate('google', { scope: ['profile', 'email'] }));
+// returnTo 검증: 같은 사이트 내부 경로만 허용 (open redirect 방어)
+function isSafePath(p) {
+  return typeof p === 'string'
+    && p.startsWith('/')
+    && !p.startsWith('//')
+    && !p.includes('\\');
+}
+
+// role과 경로 매칭 검증
+function isAllowedForRole(path, role) {
+  const isChatPath = path === '/chat' || path.startsWith('/chat/');
+  if (role === 'CUSTOMER') return isChatPath;
+  return !isChatPath;
+}
+
+router.get('/google', (req, res, next) => {
+  if (req.query.returnTo && isSafePath(req.query.returnTo)) {
+    req.session.returnTo = req.query.returnTo;
+  }
+  passport.authenticate('google', { scope: ['profile', 'email'] })(req, res, next);
+});
 
 router.get('/google/callback', (req, res, next) => {
   passport.authenticate('google', (err, user, info) => {
     if (err) return next(err);
-    
+
     if (!user) {
-      return res.status(403).json({ 
-        success: false, 
-        message: info ? info.message : '로그인 실패' 
+      return res.status(403).json({
+        success: false,
+        message: info ? info.message : '로그인 실패'
       });
     }
 
     req.logIn(user, (err) => {
       if (err) return next(err);
-    
+
+      const savedReturnTo = req.session.returnTo;
+      delete req.session.returnTo;
+
       req.session.save((err) => {
         if (err) return next(err);
-        const redirectPath = user.role === 'CUSTOMER' ? '/chat' : '/home';
-        return res.redirect(`${process.env.ROOT_URL}${redirectPath}`);
+
+        const fallback = user.role === 'CUSTOMER' ? '/chat' : '/home';
+        const target = (savedReturnTo && isSafePath(savedReturnTo) && isAllowedForRole(savedReturnTo, user.role))
+          ? savedReturnTo
+          : fallback;
+
+        return res.redirect(`${process.env.ROOT_URL}${target}`);
       });
     });
   })(req, res, next);

@@ -43,6 +43,14 @@
    - 빈 컬렉션은 RESTful 관점에서 정상 응답이며, 프론트가 try/catch 없이 일관된 처리 가능
    - Swagger 주석에서 404 응답 항목 제거 + description에 빈 배열 응답 명시
    - 단건 GET(`/orders/:id` 등)과 PATCH/DELETE의 404는 그대로 유지 (대상 부재는 진짜 에러)
+8. **OAuth 로그인 후 returnTo 기반 리다이렉트**
+
+   - 기존: 로그인 후 role에 따라 `/chat` 또는 `/home`으로 무조건 이동
+   - 변경: `/auth/google?returnTo=/chat/2`처럼 진입 URL을 받으면 세션에 저장 후 콜백에서 해당 경로로 복귀
+   - `isSafePath()`: 같은 사이트 내부 절대경로만 허용 (open redirect 방어 — `//`, `\` 차단)
+   - `isAllowedForRole()`: CUSTOMER는 `/chat` 경로만, 그 외 role은 `/chat`이 아닌 경로만 허용 (role-경로 충돌 시 안전한 fallback으로 라우팅)
+   - 검증 실패 시 기존 fallback(`/chat` 또는 `/home`) 유지
+   - 프론트 작업 필요: 로그인 진입점에서 현재 경로를 `returnTo` 쿼리로 붙여 호출
 
 ---
 
