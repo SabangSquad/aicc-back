@@ -102,6 +102,11 @@ const memoryLoaderNode = async (state) => {
 
 // 노드 3: Supervisor
 const supervisorNode = async (state) => {
+  // pre 단계에서 이미 분류됐으면 스킵 (첫 턴 병렬 실행 케이스)
+  if (state.intent) {
+    console.log(`   ⚡ [Skip Supervisor] pre에서 이미 분류 완료: ${state.intent}`);
+    return {};
+  }
   console.log(`🎯 [Node 3: Supervisor] 분류 중...`);
   const today = new Date().toLocaleDateString('ko-KR', {
     year: 'numeric', month: 'long', day: 'numeric', weekday: 'long',
@@ -757,14 +762,31 @@ const composerNode = async (state) => {
   };
 };
 
-// 병렬 실행 노드: guardrail + memory를 동시에 실행
+// 병렬 실행 노드: guardrail + memory + (첫 턴이면 supervisor까지) 동시 실행
 const parallelPreNode = async (state) => {
+  // 메시지 개수 확인 — 첫 턴이면 메모리 불필요, supervisor까지 병렬 가능
+  const { rows: cntRows } = await pool.query(
+    "SELECT COUNT(*)::int AS cnt FROM messages WHERE case_id = $1",
+    [state.caseId]
+  );
+  const msgCount = cntRows[0]?.cnt ?? 0;
+
+  if (msgCount === 0) {
+    console.log(`\n⚡ [병렬] Guardrail + Supervisor 동시 실행 (첫 턴, memory 생략)...`);
+    const stateForSup = { ...state, historySummary: "이전 맥락 없음" };
+    const [, supResult] = await Promise.all([
+      guardrailNode(state),
+      supervisorNode(stateForSup),
+    ]);
+    return { ...supResult, historySummary: "이전 맥락 없음" };
+  }
+
   console.log(`\n⚡ [병렬] Guardrail + Memory 동시 실행...`);
   const [, memoryResult] = await Promise.all([
     guardrailNode(state),
     memoryLoaderNode(state),
   ]);
-  return memoryResult; // guardrail은 차단 시 throw, 통과 시 결과 불필요
+  return memoryResult;
 };
 
 // 그래프 구축
