@@ -337,38 +337,54 @@ const apiNode = async (state) => {
     // 실패해도 LLM에게 처음부터 결정하게 두기
   }
 
-  // cases에 order_id 없는데 사용자가 주문 관련 질문 → customers/{id}/orders 자동 prefetch
+  // cases에 order_id 없는데 사용자가 주문 관련 질문 → 현재 가게의 주문 + 품목 + 상품명까지 한 번에 SQL prefetch
   if (caseRow && caseRow.order_id == null && caseRow.customer_id != null && /주문|배송|품목|상품|구매|결제|영수증|송장|운송장|택배/.test(state.userQuery)) {
     try {
       const { rows: orders } = await pool.query(
-        `SELECT order_id, store_id, status, total_price, ordered_at
-         FROM orders
-         WHERE customer_id = $1 AND store_id = $2
-         ORDER BY ordered_at DESC
+        `SELECT
+           o.order_id, o.status, o.total_price, o.ordered_at,
+           COALESCE(
+             json_agg(
+               json_build_object(
+                 'product_id', i.product_id,
+                 'product_name', p.name,
+                 'quantity', i.quantity,
+                 'total_price', i.total_price
+               )
+               ORDER BY i.item_id
+             ) FILTER (WHERE i.item_id IS NOT NULL),
+             '[]'::json
+           ) AS items
+         FROM orders o
+         LEFT JOIN items i ON i.order_id = o.order_id
+         LEFT JOIN products p ON p.product_id = i.product_id
+         WHERE o.customer_id = $1 AND o.store_id = $2
+         GROUP BY o.order_id, o.status, o.total_price, o.ordered_at
+         ORDER BY o.ordered_at DESC
          LIMIT 5`,
         [caseRow.customer_id, caseRow.store_id]
       );
-      const stepResult = `\n[2회차 결과 - customers/${caseRow.customer_id}/orders]: ${JSON.stringify({ data: orders })}`;
+      const stepResult = `\n[2회차 결과 - customers/${caseRow.customer_id}/orders (현재 가게, items 포함)]: ${JSON.stringify({ data: orders })}`;
       accumulatedContext += stepResult;
-      console.log(`   ⚡ [Skip LLM+HTTP] customers/${caseRow.customer_id}/orders pre-fetch 완료 (${orders.length}건)`);
+      console.log(`   ⚡ [Skip LLM+HTTP] customers/${caseRow.customer_id}/orders+items pre-fetch 완료 (${orders.length}건)`);
       iterations = 2;
     } catch (e) {
       console.error(`   └─ ❌ orders pre-fetch 실패:`, e.message);
     }
   }
 
-  // cases에 reservation_id 없는데 사용자가 예약 관련 질문 → customers/{id}/reservations 자동 prefetch
+  // cases에 reservation_id 없는데 사용자가 예약 관련 질문 → 현재 가게의 본인 예약 SQL prefetch
   if (caseRow && caseRow.reservation_id == null && caseRow.customer_id != null && /예약/.test(state.userQuery)) {
     try {
       const { rows: reservations } = await pool.query(
-        `SELECT reservation_id, store_id, reserved_at, status, headcount
+        `SELECT reservation_id, reserved_at, status, headcount
          FROM reservations
          WHERE customer_id = $1 AND store_id = $2
          ORDER BY reserved_at DESC
          LIMIT 5`,
         [caseRow.customer_id, caseRow.store_id]
       );
-      const stepResult = `\n[${iterations + 1}회차 결과 - customers/${caseRow.customer_id}/reservations]: ${JSON.stringify({ data: reservations })}`;
+      const stepResult = `\n[${iterations + 1}회차 결과 - customers/${caseRow.customer_id}/reservations (현재 가게)]: ${JSON.stringify({ data: reservations })}`;
       accumulatedContext += stepResult;
       console.log(`   ⚡ [Skip LLM+HTTP] customers/${caseRow.customer_id}/reservations pre-fetch 완료 (${reservations.length}건)`);
       iterations++;
