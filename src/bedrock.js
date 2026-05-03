@@ -77,11 +77,25 @@ const memoryLoaderNode = async (state) => {
     "SELECT speaker, content FROM messages WHERE case_id = $1 ORDER BY occurred_at DESC LIMIT 5",
     [state.caseId]
   );
+
+  // 메시지 없음 → LLM 호출 스킵
+  if (rows.length === 0) {
+    console.log(`   └─ ⚡ [Skip LLM] 이전 메시지 없음`);
+    return { historySummary: "이전 맥락 없음" };
+  }
+
   const historyText = rows.reverse().map(r => `${r.speaker}: ${r.content}`).join("\n");
 
+  // 메시지 3개 이하면 raw 그대로 사용 (요약 LLM 호출 불필요)
+  if (rows.length <= 3) {
+    console.log(`   └─ ⚡ [Skip LLM] 메시지 ${rows.length}개 → raw 사용`);
+    return { historySummary: historyText };
+  }
+
+  // 4~5개일 때만 LLM 요약
   const summary = await invokePrompt("memoryLoader", {
-    past_logs: historyText || "이전 맥락 없음",
-    user_input: state.userQuery 
+    past_logs: historyText,
+    user_input: state.userQuery
   });
   return { historySummary: summary };
 };
