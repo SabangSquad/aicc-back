@@ -1,5 +1,79 @@
 # 변경 이력
 
+## 2026-05-03
+
+### 응답 시간 단축 (LLM 호출 최소화) + API agent 안정화 + 가드레일/composer 정확도
+
+1. **memoryLoader: 짧은 히스토리에서 LLM 호출 스킵**
+
+   - 이전 메시지가 0개 → `historySummary: "이전 맥락 없음"`로 LLM 호출 자체 스킵
+   - 메시지 1~3개 → raw 텍스트 그대로 전달 (요약 LLM 호출 불필요)
+   - 4~5개일 때만 요약 LLM 호출
+   - 효과: 첫 턴/초반 턴 응답 시간 ~500ms~1s 단축
+2. **API agent에 `done` 플래그 도입 — finish용 LLM 호출 1회 절약**
+
+   - LLM 출력 JSON에 `"done": true|false` 필드 추가
+   - `done:true`면 axios 호출 후 즉시 break (다음 finish용 LLM 호출 생략)
+   - 단순 조회는 LLM 1회 + 종료, 배송 이력 chain은 2회 + 종료
+3. **Supervisor / composer 프롬프트 압축 + 첫 턴 supervisor 병렬 실행**
+
+   - 프롬프트 길이 ~30~40% 단축 (입력 토큰 감소 → 생성 속도 ↑)
+   - 첫 턴(message 0개)에서는 `parallelPreNode`가 guardrail + supervisor 동시 실행 (memory 생략)
+   - supervisorNode 진입 시 `state.intent` 이미 있으면 short-circuit (재실행 방지)
+   - 효과: 첫 턴 LLM 1회분(~3s) 절약
+4. **Guardrail / Supervisor regex shortcut으로 LLM 호출 생략 (자주 쓰는 패턴)**
+
+   - 가드레일: 가게 운영 키워드(주문/배송/환불/교환/예약/상품/메뉴/영업/위치/주차 등) 또는 "내 X" 패턴 또는 인사 → LLM 안 거치고 즉시 PASS
+   - 위험 패턴(주민번호/카드번호/계좌번호/비밀번호/시스템 프롬프트 유출/jailbreak)은 무조건 LLM 검증
+   - Supervisor: 인사/내정보/내주문 같은 명확한 패턴은 즉시 분류 (LLM 호출 0회)
+   - 효과: 자주 쓰는 쿼리에서 LLM 2~3회 절약 (~6~9s)
+5. **Greeting intent → composer LLM 호출 생략, 템플릿 응답**
+
+   - intent='greeting'이면 composer에서 LLM 호출 없이 즉시 `"안녕하세요! 무엇을 도와드릴까요?"` 반환
+   - 인사에서 LLM 1회분 추가 절약
+6. **API agent: `cases/{case_id}` deterministic pre-fetch (axios → 직접 SQL)**
+
+   - 모든 사용자 데이터 조회의 첫 호출은 항상 cases임 → LLM 결정 + HTTP 라운드트립 둘 다 제거
+   - `pool.query` 직접 → ~30~100ms 절약
+   - LLM에게 cases 응답을 1회차 결과로 전달, "본인정보→customer_id, 주문/배송/품목→order_id, 예약→reservation_id" 힌트 함께
+7. **API agent: `customers/{id}/orders` · `customers/{id}/reservations` deterministic pre-fetch**
+
+   - cases.order_id가 null이고 사용자 질문에 "주문/배송/품목/상품/송장" 키워드 있으면 → 현재 가게의 본인 주문 SQL 자동 호출
+   - cases.reservation_id가 null이고 "예약" 키워드 있으면 → 현재 가게의 본인 예약 SQL 자동 호출
+   - 주문 prefetch는 `orders × items × products` LEFT JOIN 한 번에 → 상품명·수량·금액까지 한 쿼리로
+   - 효과: "내 주문 확인" 같은 질문에 LLM 추가 호출 없이 풍부한 데이터 제공
+8. **API agent: 무한 루프 방지**
+
+   - LLM이 이미 호출한 경로를 또 호출하려 하면 코드가 강제 break (재요청 차단)
+   - cases.order_id null인 케이스에서 LLM이 cases만 반복 호출하던 문제 해결
+9. **API agent 프롬프트에 누락된 본인 목록 API 추가**
+
+   - `GET customers/{customer_id}/orders | /reservations | /cases` 추가
+   - "ID 찾기 전략" 가이드 추가: cases에 order_id 없으면 customers/{id}/orders → data[0].order_id 추출
+   - `maxIterations` 3 → 4 (longest chain: customers/orders → orders/shipments → shipments/tracks)
+10. **챗봇 응답에서 `suggestions`(추천질문) 제거**
+
+    - composer가 [추천질문] 섹션 생성 안 함 (프롬프트에서 제거)
+    - chat.js 응답 본문에서 `suggestions` 필드 제거
+    - composerNode 파싱 단순화 (정규식 1개), `suggestedQuestions: []`로 항상 통일
+11. **Composer 프롬프트 — 여러 항목 빠짐없이 안내 룰 추가**
+
+    - "데이터에 여러 항목이 있으면 모든 항목을 빠짐없이 줄/항목별로 안내. 임의로 생략·요약 금지" 추가
+    - "주문/예약 안내 시 사용 가능한 필드는 모두 노출 (order_id, 날짜, 상태, 상품명·수량·금액 등)" 추가
+    - 단일 항목은 3~5문장, 여러 항목은 줄바꿈 + 도입/마무리 한 문장씩
+12. **Guardrail 프롬프트 — REJECT 조건 명확화 (PASS 편향 완화)**
+
+    - "기본은 PASS" 톤이 과해서 일반 지식 질문("손흥민이 누구야")까지 통과시키던 문제 해결
+    - REJECT 4가지를 구체 예시와 함께 나열 (인물 정보/날씨·뉴스/코드/번역/노래·영화·소설·게임/일반 상식)
+    - "가게 운영과 연결점이 보이지 않으면 → REJECT" 룰 추가
+    - PASS 카테고리도 명시적으로 ("내 주문 번호", "주문 상태", "환불 규정" 등)
+13. **OAuth 콜백 시 세션 재생성 대응 (passport 0.6+)**
+
+    - `req.logIn` 호출 전에 `req.session.returnTo`를 변수로 미리 추출 (재생성 후엔 사라짐)
+    - production에서 Redis 비동기 저장 경합 방지 위해 `req.session.save()` 콜백 안에서 redirect
+
+---
+
 ## 2026-04-25
 
 ### Supervisor KST 명시 + 배송 체인/메타데이터 + 주문 품목 상품명 노출 + 컬렉션 응답 정규화 + OAuth returnTo 리다이렉트
