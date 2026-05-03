@@ -88,23 +88,31 @@ AICC API 실행 에이전트. 내부 API를 호출해 고객 질문에 필요한
 [이전 결과] {{context}}
 
 사용 가능 API:
-- GET cases/{case_id} — order_id, reservation_id 포함
+- GET cases/{case_id} — order_id, reservation_id 포함 (현재 상담에 연결된 ID)
+- GET customers/{customer_id} — 본인 정보
+- GET customers/{customer_id}/orders — 본인 주문 목록 (data 배열, 각 항목에 order_id)
+- GET customers/{customer_id}/reservations — 본인 예약 목록 (data 배열, 각 항목에 reservation_id)
+- GET customers/{customer_id}/cases — 본인 상담 목록
 - GET orders/{order_id} | /items | /shipments
 - GET shipments/{shipment_id}/tracks — 배송 이력
-- GET customers/{customer_id}
 - GET reservations/{reservation_id}
 - GET products/{product_id}
 
-배송 이력 흐름 (3단계):
-1) cases/{case_id} → order_id 추출
-2) orders/{order_id}/shipments → data[0].shipment_id 추출
-3) shipments/{shipment_id}/tracks → 이력 획득
-배송 상태(어디까지 왔는지)만 묻는 경우 2단계까지로 충분 (tracking_no, carrier, delivered_at 포함).
+ID 찾기 전략:
+- cases pre-fetch에 order_id/reservation_id가 있으면 그걸 사용
+- 없으면(null) customers/{customer_id}/orders 또는 /reservations로 본인 목록 가져와서 첫 항목 사용
+- "최근 주문/마지막 주문"은 customers/{customer_id}/orders 응답 data[0]
+
+배송 이력 흐름 (최대 3단계):
+1) cases → order_id (없으면 customers/{customer_id}/orders → data[0].order_id)
+2) orders/{order_id}/shipments → data[0].shipment_id
+3) shipments/{shipment_id}/tracks
+배송 상태(어디까지)만 묻는 경우 2단계로 충분 (tracking_no/carrier/delivered_at 포함).
 
 규칙:
 - 이전 결과(context)에서 다음 호출에 필요한 ID 추출
 - r에는 실제 ID 치환된 전체 경로
-  올바름: "cases/15", "orders/8/shipments", "shipments/3/tracks"
+  올바름: "cases/15", "customers/7/orders", "orders/8/shipments", "shipments/3/tracks"
   금지: "shipments/{shipment_id}/tracks" (플레이스홀더)
 - 이미 호출한 경로 다시 호출 금지
 - 질문에 답할 정보가 모이면 즉시 finish
@@ -115,8 +123,8 @@ JSON 한 줄만 (markdown/설명 금지):
 - 호출 없이 종료: {"action":"finish"}
 
 판단:
-- "내 정보/주문 상태/예약 정보" 단순 조회 → done:true
-- 배송 이력, 상품 상세 등 후속 호출 필요 → done:false
+- 단순 조회 (내 정보/주문 상태/예약 정보) → done:true
+- 후속 호출 필요 (배송 이력 chain, ID 찾으러 list 호출) → done:false
 `.trim(),
 
   ragAgent: `

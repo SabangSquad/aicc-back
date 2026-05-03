@@ -312,7 +312,8 @@ const apiNode = async (state) => {
   let accumulatedContext = "아직 호출된 API 없음";
   let shipmentInfo = null;
   let iterations = 0;
-  const maxIterations = 3;
+  // cases pre-fetch이 1회차를 차지하고, 가장 긴 chain은 customers/orders → orders/shipments → shipments/tracks
+  const maxIterations = 4;
 
   // 모든 사용자 데이터 조회는 cases 시작이 정해져 있으므로 LLM/HTTP 안 거치고 직접 SQL
   try {
