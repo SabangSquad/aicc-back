@@ -316,6 +316,7 @@ const apiNode = async (state) => {
   const maxIterations = 4;
 
   // 모든 사용자 데이터 조회는 cases 시작이 정해져 있으므로 LLM/HTTP 안 거치고 직접 SQL
+  let caseRow = null;
   try {
     const { rows: caseRows } = await pool.query(
       `SELECT case_id, customer_id, store_id, order_id, reservation_id, category, status
@@ -323,17 +324,57 @@ const apiNode = async (state) => {
       [state.caseId]
     );
     if (caseRows.length === 0) throw new Error(`case_id ${state.caseId} not found`);
-    const rest = caseRows[0];
+    caseRow = caseRows[0];
     const filteredCase = {
-      ...rest,
+      ...caseRow,
       _note: "summary 무시. 질문에 맞는 ID로 다음 호출: 본인정보→customer_id, 주문/배송/품목→order_id, 예약→reservation_id."
     };
     accumulatedContext = `\n[1회차 결과 - cases/${state.caseId}]: ${JSON.stringify(filteredCase)}`;
-    console.log(`   ⚡ [Skip LLM+HTTP] cases/${state.caseId} pre-fetch 완료 (customer_id=${rest.customer_id ?? 'none'}, order_id=${rest.order_id ?? 'none'}, reservation_id=${rest.reservation_id ?? 'none'})`);
+    console.log(`   ⚡ [Skip LLM+HTTP] cases/${state.caseId} pre-fetch 완료 (customer_id=${caseRow.customer_id ?? 'none'}, order_id=${caseRow.order_id ?? 'none'}, reservation_id=${caseRow.reservation_id ?? 'none'})`);
     iterations = 1;
   } catch (e) {
     console.error(`   └─ ❌ cases pre-fetch 실패:`, e.message);
     // 실패해도 LLM에게 처음부터 결정하게 두기
+  }
+
+  // cases에 order_id 없는데 사용자가 주문 관련 질문 → customers/{id}/orders 자동 prefetch
+  if (caseRow && caseRow.order_id == null && caseRow.customer_id != null && /주문|배송|품목|상품|구매|결제|영수증|송장|운송장|택배/.test(state.userQuery)) {
+    try {
+      const { rows: orders } = await pool.query(
+        `SELECT order_id, store_id, status, total_price, ordered_at
+         FROM orders
+         WHERE customer_id = $1 AND store_id = $2
+         ORDER BY ordered_at DESC
+         LIMIT 5`,
+        [caseRow.customer_id, caseRow.store_id]
+      );
+      const stepResult = `\n[2회차 결과 - customers/${caseRow.customer_id}/orders]: ${JSON.stringify({ data: orders })}`;
+      accumulatedContext += stepResult;
+      console.log(`   ⚡ [Skip LLM+HTTP] customers/${caseRow.customer_id}/orders pre-fetch 완료 (${orders.length}건)`);
+      iterations = 2;
+    } catch (e) {
+      console.error(`   └─ ❌ orders pre-fetch 실패:`, e.message);
+    }
+  }
+
+  // cases에 reservation_id 없는데 사용자가 예약 관련 질문 → customers/{id}/reservations 자동 prefetch
+  if (caseRow && caseRow.reservation_id == null && caseRow.customer_id != null && /예약/.test(state.userQuery)) {
+    try {
+      const { rows: reservations } = await pool.query(
+        `SELECT reservation_id, store_id, reserved_at, status, headcount
+         FROM reservations
+         WHERE customer_id = $1 AND store_id = $2
+         ORDER BY reserved_at DESC
+         LIMIT 5`,
+        [caseRow.customer_id, caseRow.store_id]
+      );
+      const stepResult = `\n[${iterations + 1}회차 결과 - customers/${caseRow.customer_id}/reservations]: ${JSON.stringify({ data: reservations })}`;
+      accumulatedContext += stepResult;
+      console.log(`   ⚡ [Skip LLM+HTTP] customers/${caseRow.customer_id}/reservations pre-fetch 완료 (${reservations.length}건)`);
+      iterations++;
+    } catch (e) {
+      console.error(`   └─ ❌ reservations pre-fetch 실패:`, e.message);
+    }
   }
 
   while (iterations < maxIterations) {
@@ -373,10 +414,16 @@ const apiNode = async (state) => {
       // ID 값에서 중괄호 {} 제거
       const targetId = String(callInfo.i || state.caseId).replace(/\{|\}/g, "");
       let targetUrl = `${internalApiBaseUrl}/${callInfo.r}`;
-      
+
       // 경로 중복 방지
       if (targetId !== "null" && !callInfo.r.includes(targetId)) {
         targetUrl += `/${targetId}`;
+      }
+
+      // 무한 루프 방지: 이미 호출한 경로 또 호출하면 강제 finish
+      if (accumulatedContext.includes(`결과 - ${callInfo.r}]`)) {
+        console.log(`   └─ ⏹️ 이미 호출한 경로(${callInfo.r}) 재요청 → 강제 finish`);
+        break;
       }
 
       console.log(`   📡 [API 호출]: ${callInfo.m || 'GET'} ${targetUrl}`);
