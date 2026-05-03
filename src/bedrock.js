@@ -48,10 +48,38 @@ const graphState = {
   }
 };
 
+// 가드레일 regex shortcut — 명백히 안전한 케이스는 LLM 없이 즉시 PASS
+function isGuardrailObviouslySafe(q) {
+  // 위험 패턴 한 가지라도 있으면 LLM에 맡김
+  if (/주민번호|카드번호|비밀번호|시스템\s*프롬프트|jailbreak|ignore.*instruction/i.test(q)) {
+    return false;
+  }
+  // 길이가 너무 길면 LLM에 맡김 (복잡한 의도일 수 있음)
+  if (q.length > 200) return false;
+
+  // 가게 운영 관련 명백한 키워드 포함
+  const safe = /(주문|배송|환불|교환|취소|예약|상품|메뉴|영업|위치|주소|주차|진료|편의|와이파이|화장실|픽업|포장|배달|결제|영수증)/;
+  if (safe.test(q)) return true;
+
+  // 인사/단답
+  if (/^(안녕|반갑|감사|고마워|반가워|네|아니|알겠|ok|hi|hello|ㅎㅇ|ㅋ|ㅎ|응|넵|좋아)/i.test(q.trim())) {
+    return true;
+  }
+
+  return false;
+}
+
 // 그래프 노드 정의
 const guardrailNode = async (state) => {
   // 노드 1: 가드레일
   console.log(`\n🔍 [Node 1: Guardrail] 검사 시작...`);
+
+  // Regex shortcut — 명백히 안전한 입력은 LLM 호출 생략
+  if (isGuardrailObviouslySafe(state.userQuery)) {
+    console.log(`   ⚡ [Skip LLM] regex로 PASS`);
+    return { ...state };
+  }
+
   const res = await invokePrompt("guardrail", {
     user_input: state.userQuery
   });
@@ -100,6 +128,33 @@ const memoryLoaderNode = async (state) => {
   return { historySummary: summary };
 };
 
+// Supervisor regex shortcut — 명백한 패턴은 LLM 없이 즉시 분류
+function trySupervisorShortcut(state) {
+  const q = state.userQuery.trim();
+  const sc = state.storeCategory;
+
+  // 1) 인사/단순 응답
+  if (/^(안녕|반갑|감사|고마워|반가워|hi|hello|ㅎㅇ)/i.test(q) && q.length <= 15) {
+    return {
+      intent: 'greeting',
+      sourceData: '고객이 인사 또는 단순 응답을 했습니다. 친절하게 인사하고 무엇을 도와드릴지 물어보세요.',
+    };
+  }
+
+  // 2) "내 정보/계정/프로필" — 로그인 시 항상 api
+  if (/^내\s*(정보|계정|프로필)\b/.test(q) && state.customerId) {
+    return { intent: 'api' };
+  }
+
+  // 3) "내 주문/배송" 단순 조회 — 날짜/행동 동사 없을 때만, 이커머스/null 업종에서만
+  const hasComplexity = /\d{1,2}월|\d{1,2}일|내일|모레|오늘|어제|이번\s*주|다음\s*주|취소|환불|교환|변경|할게|해줘|싶/;
+  if (/^내\s*(주문|배송)\b/.test(q) && !hasComplexity.test(q) && state.customerId && (sc === '이커머스' || !sc)) {
+    return { intent: 'api' };
+  }
+
+  return null;
+}
+
 // 노드 3: Supervisor
 const supervisorNode = async (state) => {
   // pre 단계에서 이미 분류됐으면 스킵 (첫 턴 병렬 실행 케이스)
@@ -107,6 +162,14 @@ const supervisorNode = async (state) => {
     console.log(`   ⚡ [Skip Supervisor] pre에서 이미 분류 완료: ${state.intent}`);
     return {};
   }
+
+  // Regex shortcut — 명백한 패턴은 LLM 호출 생략
+  const shortcut = trySupervisorShortcut(state);
+  if (shortcut) {
+    console.log(`   ⚡ [Skip LLM] regex 분류: ${shortcut.intent}`);
+    return shortcut;
+  }
+
   console.log(`🎯 [Node 3: Supervisor] 분류 중...`);
   const today = new Date().toLocaleDateString('ko-KR', {
     year: 'numeric', month: 'long', day: 'numeric', weekday: 'long',
@@ -248,23 +311,21 @@ const apiNode = async (state) => {
   let iterations = 0;
   const maxIterations = 3;
 
-  // 모든 사용자 데이터 조회는 cases 시작이 정해져 있으므로 LLM 안 거치고 직접 호출
+  // 모든 사용자 데이터 조회는 cases 시작이 정해져 있으므로 LLM/HTTP 안 거치고 직접 SQL
   try {
-    const caseRes = await axios({
-      method: 'GET',
-      url: `${internalApiBaseUrl}/cases/${state.caseId}`,
-      headers: {
-        "x-internal-secret": process.env.INTERNAL_SECRET_KEY,
-        "Content-Type": "application/json"
-      }
-    });
-    const { summary, ...rest } = caseRes.data;
+    const { rows: caseRows } = await pool.query(
+      `SELECT case_id, customer_id, store_id, order_id, reservation_id, category, status
+       FROM cases WHERE case_id = $1`,
+      [state.caseId]
+    );
+    if (caseRows.length === 0) throw new Error(`case_id ${state.caseId} not found`);
+    const rest = caseRows[0];
     const filteredCase = {
       ...rest,
       _note: "summary 무시. 질문에 맞는 ID로 다음 호출: 본인정보→customer_id, 주문/배송/품목→order_id, 예약→reservation_id."
     };
     accumulatedContext = `\n[1회차 결과 - cases/${state.caseId}]: ${JSON.stringify(filteredCase)}`;
-    console.log(`   ⚡ [Skip LLM] cases/${state.caseId} pre-fetch 완료 (customer_id=${rest.customer_id ?? 'none'}, order_id=${rest.order_id ?? 'none'}, reservation_id=${rest.reservation_id ?? 'none'})`);
+    console.log(`   ⚡ [Skip LLM+HTTP] cases/${state.caseId} pre-fetch 완료 (customer_id=${rest.customer_id ?? 'none'}, order_id=${rest.order_id ?? 'none'}, reservation_id=${rest.reservation_id ?? 'none'})`);
     iterations = 1;
   } catch (e) {
     console.error(`   └─ ❌ cases pre-fetch 실패:`, e.message);
@@ -734,8 +795,21 @@ const storeNode = async (state) => {
 
 // 노드 6: Composer (Verifier 역할 통합)
 const composerNode = async (state) => {
+  // Greeting은 LLM 호출 없이 즉시 응답 (큰 시간 절약)
+  if (state.intent === 'greeting') {
+    console.log(`   ⚡ [Skip LLM] Greeting 템플릿 응답`);
+    return {
+      finalAnswer: '안녕하세요! 무엇을 도와드릴까요?',
+      suggestedQuestions: [
+        '영업시간이 어떻게 되나요?',
+        '주문 상태를 확인하고 싶어요',
+        '환불 규정이 궁금해요',
+      ],
+    };
+  }
+
   console.log(`✍️ [Node 8/9: Composer] 답변 및 추천 질문 구성 중...`);
-  
+
   const res = await invokePrompt("composer", {
     user_input: state.userQuery,
     source_data: state.sourceData,
