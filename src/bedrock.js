@@ -50,15 +50,18 @@ const graphState = {
 
 // 가드레일 regex shortcut — 명백히 안전한 케이스는 LLM 없이 즉시 PASS
 function isGuardrailObviouslySafe(q) {
-  // 위험 패턴 한 가지라도 있으면 LLM에 맡김
-  if (/주민번호|카드번호|비밀번호|시스템\s*프롬프트|jailbreak|ignore.*instruction/i.test(q)) {
+  // 위험 패턴 한 가지라도 있으면 LLM에 맡김 (단, "주문/예약/송장번호"는 정상 문의이므로 제외)
+  if (/주민번호|카드번호|계좌번호|비밀번호|시스템\s*프롬프트|jailbreak|ignore.*instruction/i.test(q)) {
     return false;
   }
   // 길이가 너무 길면 LLM에 맡김 (복잡한 의도일 수 있음)
   if (q.length > 200) return false;
 
+  // "내 X" 본인 데이터 조회는 항상 안전
+  if (/^내\s|내\s(주문|배송|예약|정보|계정|품목|상품|이력)/.test(q)) return true;
+
   // 가게 운영 관련 명백한 키워드 포함
-  const safe = /(주문|배송|환불|교환|취소|예약|상품|메뉴|영업|위치|주소|주차|진료|편의|와이파이|화장실|픽업|포장|배달|결제|영수증)/;
+  const safe = /(주문|배송|환불|교환|취소|예약|상품|메뉴|영업|위치|주소|주차|진료|편의|와이파이|화장실|픽업|포장|배달|결제|영수증|송장|운송장|택배|규정|정책)/;
   if (safe.test(q)) return true;
 
   // 인사/단답
@@ -795,20 +798,16 @@ const storeNode = async (state) => {
 
 // 노드 6: Composer (Verifier 역할 통합)
 const composerNode = async (state) => {
-  // Greeting은 LLM 호출 없이 즉시 응답 (큰 시간 절약)
+  // Greeting은 LLM 호출 없이 즉시 응답
   if (state.intent === 'greeting') {
     console.log(`   ⚡ [Skip LLM] Greeting 템플릿 응답`);
     return {
       finalAnswer: '안녕하세요! 무엇을 도와드릴까요?',
-      suggestedQuestions: [
-        '영업시간이 어떻게 되나요?',
-        '주문 상태를 확인하고 싶어요',
-        '환불 규정이 궁금해요',
-      ],
+      suggestedQuestions: [],
     };
   }
 
-  console.log(`✍️ [Node 8/9: Composer] 답변 및 추천 질문 구성 중...`);
+  console.log(`✍️ [Node 8/9: Composer] 답변 구성 중...`);
 
   const res = await invokePrompt("composer", {
     user_input: state.userQuery,
@@ -816,23 +815,13 @@ const composerNode = async (state) => {
     history: state.historySummary
   });
 
-  // [답변]과 [추천질문] 섹션을 정규표현식으로 분리
-  const answerMatch = res.match(/\[답변\]\s*([\s\S]+?)(?=\[추천질문\]|$)/);
-  const suggestionsMatch = res.match(/\[추천질문\]\s*([\s\S]+)/);
+  // 혹시 LLM이 [답변] 라벨을 붙여 출력해도 깨끗이 추출
+  const answerMatch = res.match(/\[답변\]\s*([\s\S]+)/);
+  const finalAnswer = (answerMatch ? answerMatch[1] : res).trim();
 
-  const finalAnswer = answerMatch ? answerMatch[1].trim() : res.trim();
-  
-  // 추천 질문을 배열 형태로 변환 (숫자나 불렛 기호 제거)
-  const suggestions = suggestionsMatch 
-    ? suggestionsMatch[1]
-        .split('\n')
-        .map(s => s.replace(/^\d+\.\s*|^\-\s*/, '').trim())
-        .filter(s => s && s.length > 0)
-    : ["다른 궁금한 점이 있으신가요?"];
-
-  return { 
-    finalAnswer, 
-    suggestedQuestions: suggestions.slice(0, 3) // 상위 3개만 제안
+  return {
+    finalAnswer,
+    suggestedQuestions: [],
   };
 };
 
@@ -976,7 +965,6 @@ export async function processAICC(userQuery, caseId, storeId, customerId, res) {
       return {
         ok: true,
         answer: "죄송합니다. 해당 서비스는 이 가게에서 지원하지 않습니다.",
-        suggestions: [],
         caseId: String(caseId),
         reason: "미지원 기능"
       };
@@ -989,7 +977,6 @@ export async function processAICC(userQuery, caseId, storeId, customerId, res) {
         ok: true,
         loginRequired: true,
         answer: finalState.loginMessage || "해당 정보를 조회하려면 로그인이 필요합니다.",
-        suggestions: [],
         caseId: String(caseId),
         reason: "로그인 필요"
       };
@@ -1006,7 +993,6 @@ export async function processAICC(userQuery, caseId, storeId, customerId, res) {
     const response = {
       ok: true,
       answer: finalState.finalAnswer,
-      suggestions: finalState.suggestedQuestions || [],
       caseId: String(caseId),
       reason: INTENT_REASONS[finalState.intent] || "답변 완료",
       ...(finalState.showReservationForm && { showReservationForm: true }),
@@ -1014,9 +1000,8 @@ export async function processAICC(userQuery, caseId, storeId, customerId, res) {
       ...(finalState.shipmentInfo && { shipmentInfo: finalState.shipmentInfo })
     };
 
-    console.log(`\n🎁 [Final Response] 질문 유도형 응답 생성:`);
+    console.log(`\n🎁 [Final Response]`);
     console.log(`   📝 답변 요약: ${response.answer?.substring(0, 40)}...`);
-    console.log(`   💡 추천 질문:`, response.suggestions);
 
     return response;
   } catch (err) {

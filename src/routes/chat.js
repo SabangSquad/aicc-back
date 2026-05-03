@@ -310,7 +310,6 @@ router.post("/", async (req, res) => {
       ok: true,
       answer: result.answer,
       reason: result.reason,
-      suggestions: result.suggestions,
       caseId: caseId,
       ...(result.showReservationForm && { showReservationForm: true }),
       ...(result.availableSlots && { availableSlots: result.availableSlots }),
