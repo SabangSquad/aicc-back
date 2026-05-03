@@ -235,12 +235,36 @@ const apiNode = async (state) => {
     };
   }
 
-  const apiSpec = await retrieveKB(state.userQuery, state.storeId);
+  // 가게 매뉴얼은 API 결정에 도움 안 되므로 pgvector 검색 생략 (성능)
+  const apiSpec = "";
 
   let accumulatedContext = "아직 호출된 API 없음";
   let shipmentInfo = null;
   let iterations = 0;
-  const maxIterations = 4;
+  const maxIterations = 3;
+
+  // 모든 사용자 데이터 조회는 cases 시작이 정해져 있으므로 LLM 안 거치고 직접 호출
+  try {
+    const caseRes = await axios({
+      method: 'GET',
+      url: `${internalApiBaseUrl}/cases/${state.caseId}`,
+      headers: {
+        "x-internal-secret": process.env.INTERNAL_SECRET_KEY,
+        "Content-Type": "application/json"
+      }
+    });
+    const { summary, ...rest } = caseRes.data;
+    const filteredCase = {
+      ...rest,
+      _note: "summary 무시. 질문에 맞는 ID로 다음 호출: 본인정보→customer_id, 주문/배송/품목→order_id, 예약→reservation_id."
+    };
+    accumulatedContext = `\n[1회차 결과 - cases/${state.caseId}]: ${JSON.stringify(filteredCase)}`;
+    console.log(`   ⚡ [Skip LLM] cases/${state.caseId} pre-fetch 완료 (customer_id=${rest.customer_id ?? 'none'}, order_id=${rest.order_id ?? 'none'}, reservation_id=${rest.reservation_id ?? 'none'})`);
+    iterations = 1;
+  } catch (e) {
+    console.error(`   └─ ❌ cases pre-fetch 실패:`, e.message);
+    // 실패해도 LLM에게 처음부터 결정하게 두기
+  }
 
   while (iterations < maxIterations) {
     console.log(`   --- [회차 ${iterations + 1} / ${maxIterations}] ---`);
@@ -326,6 +350,12 @@ const apiNode = async (state) => {
       const stepResult = `\n[${iterations + 1}회차 결과 - ${callInfo.r}]: ${JSON.stringify(filteredData)}`;
       accumulatedContext = accumulatedContext === "아직 호출된 API 없음" ? stepResult : accumulatedContext + stepResult;
       iterations++;
+
+      // LLM이 done:true로 마지막 호출이라고 표시하면 finish LLM 호출 생략
+      if (callInfo.done === true) {
+        console.log(`   └─ ⚡ [Skip LLM] done:true — finish 호출 생략`);
+        break;
+      }
 
     } catch (e) {
       console.error(`   └─ ❌ [파싱/호출 에러]:`, e.message);
