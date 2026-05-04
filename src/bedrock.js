@@ -9,6 +9,19 @@ import { findSimilarContext } from "./services/searchService.js";
 
 // PostgreSQL 체크포인터
 const checkpointer = new PostgresSaver(pool);
+
+// 토큰 오버플로우 방지: 한국어 1토큰 ≈ 1.5~2자 가정. 안전하게 1.5로 계산.
+// 모델 컨텍스트 3072. 출력 512 + 시스템프롬프트 400 + 질문 50 = 약 962 예약. 입력 변수 합계 2000 토큰 이내 권장.
+function truncate(text, maxChars, opts = {}) {
+  if (!text) return text;
+  const str = String(text);
+  if (str.length <= maxChars) return str;
+  const keepEnd = opts.keepEnd === true; // 최근 정보 보존(history용)
+  if (keepEnd) {
+    return "...(앞부분 생략)\n" + str.slice(-maxChars);
+  }
+  return str.slice(0, maxChars) + "\n...(이하 생략)";
+}
 const internalApiBaseUrl = (
   process.env.INTERNAL_API_BASE_URL ||
   (process.env.NODE_ENV === "production" ? "http://aicc-back:4000" : process.env.ROOT_URL)
@@ -105,7 +118,7 @@ const guardrailNode = async (state) => {
 const memoryLoaderNode = async (state) => {
   console.log(`📂 [Node 2: Memory Loader] 로드 중...`);
   const { rows } = await pool.query(
-    "SELECT speaker, content FROM messages WHERE case_id = $1 ORDER BY occurred_at DESC LIMIT 5",
+    "SELECT speaker, content FROM messages WHERE case_id = $1 ORDER BY occurred_at DESC LIMIT 10",
     [state.caseId]
   );
 
@@ -123,9 +136,9 @@ const memoryLoaderNode = async (state) => {
     return { historySummary: historyText };
   }
 
-  // 4~5개일 때만 LLM 요약
+  // 4~10개일 때 LLM 요약 (구체 데이터 보존하면서 압축)
   const summary = await invokePrompt("memoryLoader", {
-    past_logs: historyText,
+    past_logs: truncate(historyText, 2500, { keepEnd: true }),
     user_input: state.userQuery
   });
   return { historySummary: summary };
@@ -180,7 +193,7 @@ const supervisorNode = async (state) => {
   });
   const raw = await invokePrompt("supervisor", {
     user_input: state.userQuery,
-    context: state.historySummary,
+    context: truncate(state.historySummary, 1000, { keepEnd: true }),
     category: state.category || "없음",
     store_category: state.storeCategory || "없음",
     today: today
@@ -400,7 +413,7 @@ const apiNode = async (state) => {
       user_input: state.userQuery,
       case_id: state.caseId,
       api_docs: apiSpec,
-      context: accumulatedContext 
+      context: truncate(accumulatedContext, 3000, { keepEnd: true })
     });
 
 
@@ -512,7 +525,8 @@ const ragNode = async (state) => {
   const docs = await retrieveKB(state.userQuery, state.storeId);
   const res = await invokePrompt("ragAgent", {
     user_query: state.userQuery,
-    retrieved_context: docs 
+    retrieved_context: truncate(docs, 2500),
+    history: truncate(state.historySummary || "이전 맥락 없음", 1000, { keepEnd: true })
   });
   return { 
     sourceData: res, 
@@ -875,8 +889,8 @@ const composerNode = async (state) => {
 
   const res = await invokePrompt("composer", {
     user_input: state.userQuery,
-    source_data: state.sourceData,
-    history: state.historySummary
+    source_data: truncate(state.sourceData, 3000),
+    history: truncate(state.historySummary, 1000, { keepEnd: true })
   });
 
   // 혹시 LLM이 [답변] 라벨을 붙여 출력해도 깨끗이 추출
@@ -1078,7 +1092,7 @@ export async function processAICC(userQuery, caseId, storeId, customerId, res) {
 // 상담 분석
 export async function analyzeCaseConversation(conversationText, storeCategory = null) {
   const res = await invokePrompt("caseWriter", {
-    conversation_text: conversationText,
+    conversation_text: truncate(conversationText, 3500, { keepEnd: true }),
     store_category: storeCategory || "없음"
   });
   try {
