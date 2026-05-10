@@ -227,7 +227,7 @@ router.get('/:customer_id/cases', isCustomerOrOwner, async (req, res) => {
       return res.status(400).json({ error: '유효하지 않은 고객 ID입니다.' });
     }
 
-    const { status, category } = req.query;
+    const { status, category, store_id } = req.query;
     const where = ['c.customer_id = $1'];
     const params = [customerId];
     let idx = 2;
@@ -244,6 +244,14 @@ router.get('/:customer_id/cases', isCustomerOrOwner, async (req, res) => {
       if (cat.length === 0) return res.status(400).json({ error: 'category는 빈 문자열일 수 없습니다.' });
       where.push(`c.category = $${idx++}`);
       params.push(cat);
+    }
+
+    if (store_id !== undefined) {
+      const sid = parseInt(store_id, 10);
+      if (Number.isInteger(sid)) {
+        where.push(`c.store_id = $${idx++}`);
+        params.push(sid);
+      }
     }
 
     const { page, limit, offset } = parsePagination(req.query);
@@ -304,12 +312,19 @@ router.get('/:customer_id/orders', isCustomerOrOwner, async (req, res) => {
       return res.status(400).json({ error: '유효하지 않은 고객 ID입니다.' });
     }
 
-    const { status } = req.query;
+    const { status, store_id } = req.query;
     const { page, limit, offset } = parsePagination(req.query);
     const conditions = ['customer_id = $1'];
     const params = [customerId];
 
     if (status) { params.push(status); conditions.push(`status = $${params.length}`); }
+    if (store_id) {
+      const sid = parseInt(store_id, 10);
+      if (Number.isInteger(sid)) {
+        params.push(sid);
+        conditions.push(`store_id = $${params.length}`);
+      }
+    }
 
     const where = conditions.join(' AND ');
     const countRes = await pool.query(`SELECT COUNT(*)::int FROM orders WHERE ${where}`, params);
@@ -366,12 +381,19 @@ router.get('/:customer_id/reservations', isCustomerOrOwner, async (req, res) => 
       return res.status(400).json({ error: '유효하지 않은 고객 ID입니다.' });
     }
 
-    const { status } = req.query;
+    const { status, store_id } = req.query;
     const { page, limit, offset } = parsePagination(req.query);
     const conditions = ['customer_id = $1'];
     const params = [customerId];
 
     if (status) { params.push(status); conditions.push(`status = $${params.length}`); }
+    if (store_id) {
+      const sid = parseInt(store_id, 10);
+      if (Number.isInteger(sid)) {
+        params.push(sid);
+        conditions.push(`store_id = $${params.length}`);
+      }
+    }
 
     const where = conditions.join(' AND ');
     const countRes = await pool.query(`SELECT COUNT(*)::int FROM reservations WHERE ${where}`, params);

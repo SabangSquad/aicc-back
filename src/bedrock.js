@@ -549,10 +549,16 @@ const apiNode = async (state) => {
 
       console.log(`   📡 [API 호출]: ${callInfo.m || 'GET'} ${targetUrl}`);
 
+      // 본인 목록 조회는 항상 현재 가게로 필터 (LLM이 빠뜨려도 코드가 보정)
+      let safeParams = callInfo.p || {};
+      if (state.storeId && /^customers\/[^/]+\/(orders|reservations|cases)\/?$/.test(callInfo.r)) {
+        safeParams = { ...safeParams, store_id: state.storeId };
+      }
+
       const res = await axios({
         method: callInfo.m || 'GET',
         url: targetUrl,
-        params: callInfo.p,
+        params: safeParams,
         headers: {
           "x-internal-secret": process.env.INTERNAL_SECRET_KEY,
           "Content-Type": "application/json"
