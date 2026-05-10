@@ -304,6 +304,18 @@ const supervisorNode = async (state) => {
     }
   }
 
+  // 지시어("그거/이거/저거/그 주문/그 예약") + 본인 데이터 후속 조회 → api 강제
+  // 단, 정책/규정 키워드 있으면 rag 유지 (예: "그거 환불 가능?")
+  if (state.customerId && intent !== 'api' && intent !== 'escalate') {
+    const hasReference = q.match(/그거|이거|저거|그\s*(주문|배송|예약|상품|건)|방금|그건/);
+    const isInquiryAboutOwn = q.match(/뭐|어떻|언제|얼마|어디|상태|품목|상품|샀|시켰|주문했|받았|예약했/);
+    const isPolicyQuestion = q.match(/규정|정책|어떻게\s*해|되나요|가능한가요|며칠|기간/);
+    if (hasReference && isInquiryAboutOwn && !isPolicyQuestion) {
+      console.log(`   └─ 🔄 지시어 + 본인 데이터 조회 → api 강제`);
+      intent = 'api';
+    }
+  }
+
   // rag로 분류됐지만 규정/정책 질문이 아니면 store로 전환
   // 단, 인사/단순 응답은 rag 유지 (Composer가 자연스럽게 답변)
   if (sc && intent === 'rag') {
@@ -425,7 +437,7 @@ const apiNode = async (state) => {
   }
 
   // cases에 order_id 없는데 사용자가 주문 관련 질문 → 현재 가게의 주문 + 품목 + 상품명까지 한 번에 SQL prefetch
-  if (caseRow && caseRow.order_id == null && caseRow.customer_id != null && /주문|배송|품목|상품|구매|결제|영수증|송장|운송장|택배|도착|수령|예정|어디쯤|언제\s*(와|올|받|도착|배달)/.test(state.userQuery)) {
+  if (caseRow && caseRow.order_id == null && caseRow.customer_id != null && /주문|배송|품목|상품|구매|결제|영수증|송장|운송장|택배|도착|수령|예정|어디쯤|샀|시켰|언제\s*(와|올|받|도착|배달)|그거|이거|저거|그\s*(주문|배송|상품|건)/.test(state.userQuery)) {
     try {
       const { rows: orders } = await pool.query(
         `SELECT
@@ -977,10 +989,15 @@ const composerNode = async (state) => {
 
   console.log(`✍️ [Node 8/9: Composer] 답변 구성 중...`);
 
+  const today = new Date().toLocaleDateString('ko-KR', {
+    year: 'numeric', month: 'long', day: 'numeric', weekday: 'long',
+    timeZone: 'Asia/Seoul'
+  });
   const res = await invokePrompt("composer", {
     user_input: state.userQuery,
     source_data: truncate(state.sourceData, 3000),
-    history: truncate(state.historySummary, 1000, { keepEnd: true })
+    history: truncate(state.historySummary, 1000, { keepEnd: true }),
+    today
   });
 
   // 혹시 LLM이 [답변] 라벨을 붙여 출력해도 깨끗이 추출
