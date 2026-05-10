@@ -293,6 +293,17 @@ const supervisorNode = async (state) => {
     }
   }
 
+  // "도착/수령/언제 와/어디쯤/지금 어디" — 본인 배송/주문 조회 의도. 로그인 + 일반 정책 아니면 api 강제
+  // "보통 도착 시간" 같은 일반 정책은 위 배송 정책 룰에서 이미 rag로 처리됨
+  if (state.customerId && intent !== 'api' && intent !== 'rag' && intent !== 'escalate') {
+    const isPersonalDeliveryQuery = q.match(/도착\s*(예정|언제|시간|함|했)|언제\s*(와|도착|배달|받|올|올까)|어디(쯤|까지)|지금\s*어디|받을\s*수\s*있/);
+    const isGeneralPolicy = q.match(/보통|일반적|평균|기본/);
+    if (isPersonalDeliveryQuery && !isGeneralPolicy) {
+      console.log(`   └─ 🔄 본인 배송 조회 → api 강제`);
+      intent = 'api';
+    }
+  }
+
   // rag로 분류됐지만 규정/정책 질문이 아니면 store로 전환
   // 단, 인사/단순 응답은 rag 유지 (Composer가 자연스럽게 답변)
   if (sc && intent === 'rag') {
@@ -414,7 +425,7 @@ const apiNode = async (state) => {
   }
 
   // cases에 order_id 없는데 사용자가 주문 관련 질문 → 현재 가게의 주문 + 품목 + 상품명까지 한 번에 SQL prefetch
-  if (caseRow && caseRow.order_id == null && caseRow.customer_id != null && /주문|배송|품목|상품|구매|결제|영수증|송장|운송장|택배/.test(state.userQuery)) {
+  if (caseRow && caseRow.order_id == null && caseRow.customer_id != null && /주문|배송|품목|상품|구매|결제|영수증|송장|운송장|택배|도착|수령|예정|어디쯤|언제\s*(와|올|받|도착|배달)/.test(state.userQuery)) {
     try {
       const { rows: orders } = await pool.query(
         `SELECT
