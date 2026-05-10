@@ -48,10 +48,15 @@
    - cases SELECT에 `status` 컬럼 누락 → `c.status === 'AI자동해결'` 필터가 항상 0
    - 결과적으로 `aiResolveRate = 0` 되어 score = `0×40 + 30 + 0` = 30 고정
    - SELECT에 status 추가하여 정상 계산되도록 수정
+8. **fix: SSE 응답에 `explanation`/`decisionTrace` 누락 수정**
 
----
+   - `processAICC`는 두 필드를 반환하지만 `chat.js` SSE 응답 조립 단계에서 화이트리스트로 빠져있어 프론트로 전달 안 되던 문제
+   - `answer` / `login_required` 두 type 모두 옵셔널 spread로 추가
+9. **Redis 'Socket closed unexpectedly' 노이즈 로그 정리**
 
-## 2026-05-04
+   - k8s 환경에서 idle TCP 끊김으로 발생하는 자동 재연결 노이즈 다수
+   - `socket.keepAlive: 5000` + 점진적 `reconnectStrategy` 추가로 끊김 자체 감소
+   - `Socket closed` / `ECONNRESET` / `Connection timeout` 메시지는 `console.warn`으로 강등하여 실제 문제와 분리
 
 ### 대화 품질 개선 + 토큰 오버플로우 방지 + 솔루션 분석 안정화
 

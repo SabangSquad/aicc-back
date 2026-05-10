@@ -37,9 +37,23 @@ app.use(cors({
 }));
 
 // 1. Redis + 세션 설정
-const redisClient = createClient({ url: process.env.REDIS_URL || 'redis://localhost:6379' });  // Redis 연결
+const redisClient = createClient({
+  url: process.env.REDIS_URL || 'redis://localhost:6379',
+  socket: {
+    keepAlive: 5000,  // 5초마다 TCP keepalive로 idle 연결 끊김 방지
+    reconnectStrategy: (retries) => Math.min(retries * 100, 3000),  // 점진적 재연결
+  }
+});
 redisClient.connect().catch(err => console.error('Redis 연결 실패:', err.message));
-redisClient.on('error', err => console.error('Redis 오류:', err.message));
+redisClient.on('error', err => {
+  // k8s에서 idle TCP 끊김은 자동 재연결되므로 노이즈 처리
+  const msg = err?.message || '';
+  if (msg.includes('Socket closed') || msg.includes('ECONNRESET') || msg.includes('Connection timeout')) {
+    console.warn('⚠️  Redis 일시 끊김 (자동 재연결):', msg);
+    return;
+  }
+  console.error('Redis 오류:', msg);
+});
 
 // 세션을 Redis에 저장
 app.use(session({

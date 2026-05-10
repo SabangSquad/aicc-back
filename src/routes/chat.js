@@ -294,6 +294,7 @@ router.post("/", async (req, res) => {
         message: result.answer,
         reason: result.reason,
         caseId: caseId,
+        ...(result.decisionTrace && { decisionTrace: result.decisionTrace }),
       })}\n\n`);
       return res.end();
     }
@@ -314,6 +315,8 @@ router.post("/", async (req, res) => {
       ...(result.showReservationForm && { showReservationForm: true }),
       ...(result.availableSlots && { availableSlots: result.availableSlots }),
       ...(result.shipmentInfo && { shipmentInfo: result.shipmentInfo }),
+      ...(result.explanation && { explanation: result.explanation }),
+      ...(result.decisionTrace && { decisionTrace: result.decisionTrace }),
       _links: [{ rel: "self", href: "/chats", method: "POST" }]
     })}\n\n`);
 
