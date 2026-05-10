@@ -45,6 +45,9 @@ const graphState = {
     reservationType: null,
     reason: null,
     retryCount: null,
+    sources: null,
+    apiCallTrace: null,
+    decisionTrace: null,
   }
 };
 
@@ -312,6 +315,26 @@ const apiNode = async (state) => {
   let accumulatedContext = "아직 호출된 API 없음";
   let shipmentInfo = null;
   let iterations = 0;
+  const dataSources = []; // 답변 근거가 된 API/DB 출처 목록
+  const apiCallTrace = []; // 호출 경로 trace (디버그/관리자용)
+  const pushSource = (type, id) => {
+    if (id == null) return;
+    const numId = typeof id === 'string' ? parseInt(id, 10) : id;
+    if (Number.isNaN(numId)) return;
+    if (!dataSources.find(s => s.type === type && s.id === numId)) {
+      dataSources.push({ type, id: numId });
+    }
+  };
+  // route → 단수 type 매핑
+  const routeToType = (route) => {
+    const head = String(route).split('/')[0];
+    const map = {
+      cases: 'case', orders: 'order', shipments: 'shipment',
+      customers: 'customer', reservations: 'reservation',
+      products: 'product', items: 'item', tracks: 'track',
+    };
+    return map[head] || head;
+  };
   // cases pre-fetch이 1회차를 차지하고, 가장 긴 chain은 customers/orders → orders/shipments → shipments/tracks
   const maxIterations = 4;
 
@@ -331,6 +354,8 @@ const apiNode = async (state) => {
     };
     accumulatedContext = `\n[1회차 결과 - cases/${state.caseId}]: ${JSON.stringify(filteredCase)}`;
     console.log(`   ⚡ [Skip LLM+HTTP] cases/${state.caseId} pre-fetch 완료 (customer_id=${caseRow.customer_id ?? 'none'}, order_id=${caseRow.order_id ?? 'none'}, reservation_id=${caseRow.reservation_id ?? 'none'})`);
+    pushSource('case', state.caseId);
+    apiCallTrace.push({ route: `cases/${state.caseId}`, method: 'SQL', ok: true });
     iterations = 1;
   } catch (e) {
     console.error(`   └─ ❌ cases pre-fetch 실패:`, e.message);
@@ -367,6 +392,9 @@ const apiNode = async (state) => {
       const stepResult = `\n[2회차 결과 - customers/${caseRow.customer_id}/orders (현재 가게, items 포함)]: ${JSON.stringify({ data: orders })}`;
       accumulatedContext += stepResult;
       console.log(`   ⚡ [Skip LLM+HTTP] customers/${caseRow.customer_id}/orders+items pre-fetch 완료 (${orders.length}건)`);
+      pushSource('customer', caseRow.customer_id);
+      orders.forEach(o => pushSource('order', o.order_id));
+      apiCallTrace.push({ route: `customers/${caseRow.customer_id}/orders`, method: 'SQL', ok: true, count: orders.length });
       iterations = 2;
     } catch (e) {
       console.error(`   └─ ❌ orders pre-fetch 실패:`, e.message);
@@ -387,6 +415,9 @@ const apiNode = async (state) => {
       const stepResult = `\n[${iterations + 1}회차 결과 - customers/${caseRow.customer_id}/reservations (현재 가게)]: ${JSON.stringify({ data: reservations })}`;
       accumulatedContext += stepResult;
       console.log(`   ⚡ [Skip LLM+HTTP] customers/${caseRow.customer_id}/reservations pre-fetch 완료 (${reservations.length}건)`);
+      pushSource('customer', caseRow.customer_id);
+      reservations.forEach(r => pushSource('reservation', r.reservation_id));
+      apiCallTrace.push({ route: `customers/${caseRow.customer_id}/reservations`, method: 'SQL', ok: true, count: reservations.length });
       iterations++;
     } catch (e) {
       console.error(`   └─ ❌ reservations pre-fetch 실패:`, e.message);
@@ -456,6 +487,11 @@ const apiNode = async (state) => {
 
       console.log(`   └─ 🟢 [성공] ${callInfo.r} 데이터 획득`);
 
+      // 출처 추적
+      const sourceType = routeToType(callInfo.r);
+      pushSource(sourceType, targetId);
+      apiCallTrace.push({ route: callInfo.r, id: targetId !== 'null' ? targetId : null, method: callInfo.m || 'GET', ok: true });
+
       // cases 조회 시 summary가 AI를 방해하지 않도록 처리
       let filteredData = res.data;
       if (callInfo.r === 'cases' || callInfo.r === 'case') {
@@ -471,6 +507,7 @@ const apiNode = async (state) => {
         const shipment = Array.isArray(res.data?.data) ? res.data.data[0] : null;
         if (shipment?.shipment_id) {
           shipmentInfo = { ...(shipmentInfo || {}), ...shipment };
+          pushSource('shipment', shipment.shipment_id);
         }
       }
       if (/\/tracks$/.test(callInfo.r)) {
@@ -502,6 +539,8 @@ const apiNode = async (state) => {
     sourceData: accumulatedContext,
     retrievedContext: apiSpec,
     shipmentInfo,
+    sources: dataSources,
+    apiCallTrace,
     retryCount: (state.retryCount || 0) + 1
   };
 };
@@ -509,14 +548,16 @@ const apiNode = async (state) => {
 // 노드 5: RAG Agent
 const ragNode = async (state) => {
   console.log(`📚 [Node 5: RAG Agent] 지식 검색 중...`);
-  const docs = await retrieveKB(state.userQuery, state.storeId);
+  const { context: docs, sources } = await retrieveKB(state.userQuery, state.storeId);
   const res = await invokePrompt("ragAgent", {
     user_query: state.userQuery,
-    retrieved_context: docs 
+    retrieved_context: docs
   });
-  return { 
-    sourceData: res, 
+  console.log(`   └─ 📎 매뉴얼 ${sources.length}건 매칭 (top score: ${sources[0]?.score ?? 'N/A'})`);
+  return {
+    sourceData: res,
     retrievedContext: docs,
+    sources,
     retryCount: (state.retryCount || 0) + 1
   };
 };
@@ -1004,6 +1045,7 @@ export async function processAICC(userQuery, caseId, storeId, customerId, res) {
     );
 
     let finalState = {};
+    const decisionTrace = [];
 
     for await (const chunk of stream) {
       const nodeName = Object.keys(chunk)[0];
@@ -1011,6 +1053,47 @@ export async function processAICC(userQuery, caseId, storeId, customerId, res) {
 
       // 상태 누적
       finalState = { ...finalState, ...stateUpdate };
+
+      // 의사결정 trace 기록 (노드 단위 요약)
+      const traceStep = { step: nodeName };
+      switch (nodeName) {
+        case 'pre':
+          traceStep.result = 'guardrail_pass + memory_loaded';
+          break;
+        case 'supervisor':
+          traceStep.result = stateUpdate.intent || 'unknown';
+          if (stateUpdate.reservationType) traceStep.reservationType = stateUpdate.reservationType;
+          if (stateUpdate.dateStart) traceStep.dateRange = `${stateUpdate.dateStart}~${stateUpdate.dateEnd || stateUpdate.dateStart}`;
+          break;
+        case 'rag': {
+          const ss = stateUpdate.sources || [];
+          traceStep.result = `manuals_top${ss.length}`;
+          if (ss[0]) traceStep.topScore = ss[0].score;
+          break;
+        }
+        case 'api': {
+          const calls = stateUpdate.apiCallTrace || [];
+          traceStep.result = stateUpdate.finalAnswer === '__LOGIN_REQUIRED__'
+            ? 'login_required'
+            : `api_calls=${calls.length}`;
+          if (calls.length) traceStep.routes = calls.map(c => c.route);
+          break;
+        }
+        case 'store':
+          traceStep.result = stateUpdate.finalAnswer === '__LOGIN_REQUIRED__'
+            ? 'login_required'
+            : (stateUpdate.showReservationForm ? 'store_with_form' : 'store_info');
+          break;
+        case 'escalate':
+          traceStep.result = 'agent_called';
+          break;
+        case 'composer':
+          traceStep.result = 'answer_generated';
+          break;
+        default:
+          break;
+      }
+      decisionTrace.push(traceStep);
 
       // SSE로 진행 상황 전송
       const message = NODE_MESSAGES[nodeName];
@@ -1030,7 +1113,8 @@ export async function processAICC(userQuery, caseId, storeId, customerId, res) {
         ok: true,
         answer: "죄송합니다. 해당 서비스는 이 가게에서 지원하지 않습니다.",
         caseId: String(caseId),
-        reason: "미지원 기능"
+        reason: "미지원 기능",
+        decisionTrace
       };
     }
 
@@ -1042,7 +1126,8 @@ export async function processAICC(userQuery, caseId, storeId, customerId, res) {
         loginRequired: true,
         answer: finalState.loginMessage || "해당 정보를 조회하려면 로그인이 필요합니다.",
         caseId: String(caseId),
-        reason: "로그인 필요"
+        reason: "로그인 필요",
+        decisionTrace
       };
     }
 
@@ -1054,6 +1139,39 @@ export async function processAICC(userQuery, caseId, storeId, customerId, res) {
       escalate:    "상담사 연결",
     };
 
+    // 답변 근거(explanation) 구성 — intent 기반으로 사람이 읽기 쉬운 형태
+    let explanation = null;
+    if (finalState.intent === 'rag') {
+      explanation = {
+        answerType: 'manual_rag',
+        reason: '매뉴얼에서 유사한 규정을 검색해 답변했습니다.',
+        sources: finalState.sources || []
+      };
+    } else if (finalState.intent === 'api') {
+      explanation = {
+        answerType: 'customer_data',
+        reason: '로그인 고객의 주문/배송/예약 데이터를 조회해 답변했습니다.',
+        dataSources: finalState.sources || []
+      };
+    } else if (finalState.intent === 'store') {
+      explanation = {
+        answerType: 'store_info',
+        reason: '가게 기본 정보(영업시간/메뉴/예약현황 등)를 기반으로 답변했습니다.',
+        dataSources: [{ type: 'store', id: Number(storeId) }]
+      };
+    } else if (finalState.intent === 'greeting') {
+      explanation = {
+        answerType: 'greeting',
+        reason: '인사/단순 응답이라 별도 데이터 조회 없이 답변했습니다.'
+      };
+    } else if (finalState.intent === 'escalate') {
+      explanation = {
+        answerType: 'escalate',
+        reason: '상담사 개입이 필요한 요청이라 케이스를 대기 상태로 전환했습니다.',
+        dataSources: [{ type: 'case', id: Number(caseId) }]
+      };
+    }
+
     const response = {
       ok: true,
       answer: finalState.finalAnswer,
@@ -1061,7 +1179,9 @@ export async function processAICC(userQuery, caseId, storeId, customerId, res) {
       reason: INTENT_REASONS[finalState.intent] || "답변 완료",
       ...(finalState.showReservationForm && { showReservationForm: true }),
       ...(finalState.availableSlots && { availableSlots: finalState.availableSlots }),
-      ...(finalState.shipmentInfo && { shipmentInfo: finalState.shipmentInfo })
+      ...(finalState.shipmentInfo && { shipmentInfo: finalState.shipmentInfo }),
+      ...(explanation && { explanation }),
+      decisionTrace
     };
 
     console.log(`\n🎁 [Final Response]`);

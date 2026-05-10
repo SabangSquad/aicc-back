@@ -1,5 +1,56 @@
 # 변경 이력
 
+## 2026-05-10
+
+### 답변 근거(sources) + 의사결정 경로(decisionTrace) 노출 + 상담 종료 시 카테고리 자동 분류 + score 버그 수정
+
+1. **RAG 근거 노출 (manual_id/title/category/distance)**
+
+   - `searchService.findSimilarContext` 반환 구조 변경: `{context, sources}`
+     - `sources`는 `[{ type:'manual', manualId, title, category, distance, score, excerpt }]`
+   - SQL에 `manual_id, title, category, embedding <=> $1 AS distance` 컬럼 추가
+   - score = `1 - distance` (0~1, 1에 가까울수록 유사)
+2. **API/DB 답변 근거 노출 (dataSources)**
+
+   - `apiNode`에서 case prefetch / orders prefetch / reservations prefetch / LLM 호출 루프마다 `pushSource(type, id)` 누적
+   - 라우트 → 단수 type 매핑 헬퍼(`routeToType`): cases→case, orders→order, shipments→shipment 등
+   - shipments / tracks 응답에서도 `shipment_id` 추가 추적
+3. **의사결정 경로(decisionTrace) 노출**
+
+   - `processAICC` 스트림 루프에서 노드별로 `{step, result, ...}` 누적
+     - supervisor: intent/reservationType/dateRange
+     - rag: top score, sources count
+     - api: api_calls 수, routes 목록
+     - store: showReservationForm 유무 / login_required
+     - composer: answer_generated
+4. **응답 구조 확장 — `explanation` + `decisionTrace`**
+
+   - `explanation.answerType`: `manual_rag` | `customer_data` | `store_info` | `greeting` | `escalate`
+   - 각 type별 reason + sources/dataSources 동봉
+   - 미지원/로그인필요 응답에도 `decisionTrace` 포함
+5. **상담 종료 시 카테고리 자동 분류**
+
+   - Case Writer 프롬프트에 `{{store_category}}` 입력 변수 + 출력 JSON에 `category` 필드 추가
+   - 업종별 단일 토픽 카테고리 목록 정의
+     - 병원: `예약` | `예약확인` | `예약변경` | `예약취소` | `진료과목`
+     - 식당: `예약` | `예약확인` | `예약변경` | `예약취소` | `메뉴` | `가격`
+     - 이커머스: `배송조회` | `주문확인` | `환불` | `교환` | `취소` | `상품정보`
+   - 여러 주제 섞인 경우 "마지막에 집중된 주제" 우선 선택 규칙 적용
+   - `analyzeCaseConversation(text, storeCategory)` 시그니처 확장
+   - 종료 경로 4곳에서 storeCategory 조회 후 전달 + `category = COALESCE($cat, category)` UPDATE
+     (chat.js auto-close / manual close / summary 핸들러, app.js 크론잡, cases.js PATCH status, bedrock.js escalateNode)
+6. **GET /stores/:store_id/reservations 공개 + customer_id 선택적 노출**
+
+   - 미들웨어 제거 → 비로그인도 시간/상태/인원 조회 가능 (예약 폼 빈 시간 표시용)
+   - `customer_id`는 해당 가게 OWNER / ADMIN / 내부 호출(x-internal-secret)에만 포함
+7. **fix: /stores/:store_id/solutions score가 항상 30점으로 고정되던 버그**
+
+   - cases SELECT에 `status` 컬럼 누락 → `c.status === 'AI자동해결'` 필터가 항상 0
+   - 결과적으로 `aiResolveRate = 0` 되어 score = `0×40 + 30 + 0` = 30 고정
+   - SELECT에 status 추가하여 정상 계산되도록 수정
+
+---
+
 ## 2026-05-03
 
 ### 응답 시간 단축 (LLM 호출 최소화) + API agent 안정화 + 가드레일/composer 정확도
