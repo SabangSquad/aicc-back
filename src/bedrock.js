@@ -284,14 +284,14 @@ const supervisorNode = async (state) => {
       intent = 'rag';
     }
   }
-  // "환불|교환|반품" 정책 질문은 LLM이 escalate로 잘못 분류해도 rag 강제
+  // "환불|교환|반품|취소" 정책 질문은 LLM이 escalate로 잘못 분류해도 rag 강제
   // 행동 요청 키워드("해주/해줘/접수/처리")가 없으면 정책 질문으로 간주
-  if (q.match(/환불|교환|반품/) && intent !== 'api') {
+  if (q.match(/환불|교환|반품|취소/) && intent !== 'api') {
     // "가능" 단독도 정책 질문으로 인식 (가능한가/가능해/가능?/가능할까 모두 포함)
     const isPolicyQuestion = q.match(/규정|정책|어떻게|며칠|기간|보통|가능|되나요|되요|되는지|할\s*수\s*있/);
     const isActionRequest = q.match(/해주|해줘|접수|처리|진행|받아|넣어/);
     if (isPolicyQuestion && !isActionRequest) {
-      if (intent !== 'rag') console.log(`   └─ 🔄 환불/교환 정책 질문 → rag로 전환 (was: ${intent})`);
+      if (intent !== 'rag') console.log(`   └─ 🔄 환불/교환/취소 정책 질문 → rag로 전환 (was: ${intent})`);
       intent = 'rag';
     }
   }
