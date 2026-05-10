@@ -439,6 +439,25 @@ const apiNode = async (state) => {
   // cases에 order_id 없는데 사용자가 주문 관련 질문 → 현재 가게의 주문 + 품목 + 상품명까지 한 번에 SQL prefetch
   if (caseRow && caseRow.order_id == null && caseRow.customer_id != null && /주문|배송|품목|상품|구매|결제|영수증|송장|운송장|택배|도착|수령|예정|어디쯤|샀|시켰|언제\s*(와|올|받|도착|배달)|그거|이거|저거|그\s*(주문|배송|상품|건)/.test(state.userQuery)) {
     try {
+      // 질문에 시간 keyword 있으면 SQL에서 날짜 필터 (KST 기준)
+      const q = state.userQuery;
+      let timeFilter = '';
+      let timeLabel = '';
+      const params = [caseRow.customer_id, caseRow.store_id];
+      if (/오늘/.test(q)) {
+        timeFilter = ` AND o.ordered_at >= (NOW() AT TIME ZONE 'Asia/Seoul')::date AT TIME ZONE 'Asia/Seoul'`;
+        timeLabel = ' (오늘 필터)';
+      } else if (/어제/.test(q)) {
+        timeFilter = ` AND o.ordered_at >= ((NOW() AT TIME ZONE 'Asia/Seoul')::date - INTERVAL '1 day') AT TIME ZONE 'Asia/Seoul' AND o.ordered_at < (NOW() AT TIME ZONE 'Asia/Seoul')::date AT TIME ZONE 'Asia/Seoul'`;
+        timeLabel = ' (어제 필터)';
+      } else if (/이번\s*주/.test(q)) {
+        timeFilter = ` AND o.ordered_at >= (date_trunc('week', NOW() AT TIME ZONE 'Asia/Seoul'))::timestamp AT TIME ZONE 'Asia/Seoul'`;
+        timeLabel = ' (이번 주 필터)';
+      } else if (/이번\s*달/.test(q)) {
+        timeFilter = ` AND o.ordered_at >= (date_trunc('month', NOW() AT TIME ZONE 'Asia/Seoul'))::timestamp AT TIME ZONE 'Asia/Seoul'`;
+        timeLabel = ' (이번 달 필터)';
+      }
+
       const { rows: orders } = await pool.query(
         `SELECT
            o.order_id, o.status, o.total_price, o.ordered_at,
@@ -457,18 +476,18 @@ const apiNode = async (state) => {
          FROM orders o
          LEFT JOIN items i ON i.order_id = o.order_id
          LEFT JOIN products p ON p.product_id = i.product_id
-         WHERE o.customer_id = $1 AND o.store_id = $2
+         WHERE o.customer_id = $1 AND o.store_id = $2${timeFilter}
          GROUP BY o.order_id, o.status, o.total_price, o.ordered_at
          ORDER BY o.ordered_at DESC
          LIMIT 5`,
-        [caseRow.customer_id, caseRow.store_id]
+        params
       );
-      const stepResult = `\n[2회차 결과 - customers/${caseRow.customer_id}/orders (현재 가게, items 포함)]: ${JSON.stringify({ data: orders })}`;
+      const stepResult = `\n[2회차 결과 - customers/${caseRow.customer_id}/orders${timeLabel}, items 포함]: ${JSON.stringify({ data: orders })}`;
       accumulatedContext += stepResult;
-      console.log(`   ⚡ [Skip LLM+HTTP] customers/${caseRow.customer_id}/orders+items pre-fetch 완료 (${orders.length}건)`);
+      console.log(`   ⚡ [Skip LLM+HTTP] customers/${caseRow.customer_id}/orders+items pre-fetch 완료${timeLabel} (${orders.length}건)`);
       pushSource('customer', caseRow.customer_id);
       orders.forEach(o => pushSource('order', o.order_id));
-      apiCallTrace.push({ route: `customers/${caseRow.customer_id}/orders`, method: 'SQL', ok: true, count: orders.length });
+      apiCallTrace.push({ route: `customers/${caseRow.customer_id}/orders${timeLabel}`, method: 'SQL', ok: true, count: orders.length });
       iterations = 2;
     } catch (e) {
       console.error(`   └─ ❌ orders pre-fetch 실패:`, e.message);
@@ -478,20 +497,35 @@ const apiNode = async (state) => {
   // cases에 reservation_id 없는데 사용자가 예약 관련 질문 → 현재 가게의 본인 예약 SQL prefetch
   if (caseRow && caseRow.reservation_id == null && caseRow.customer_id != null && /예약/.test(state.userQuery)) {
     try {
+      // 시간 키워드 → SQL 필터 (KST)
+      const q = state.userQuery;
+      let timeFilter = '';
+      let timeLabel = '';
+      if (/오늘/.test(q)) {
+        timeFilter = ` AND reserved_at >= (NOW() AT TIME ZONE 'Asia/Seoul')::date AT TIME ZONE 'Asia/Seoul' AND reserved_at < ((NOW() AT TIME ZONE 'Asia/Seoul')::date + INTERVAL '1 day') AT TIME ZONE 'Asia/Seoul'`;
+        timeLabel = ' (오늘 필터)';
+      } else if (/내일/.test(q)) {
+        timeFilter = ` AND reserved_at >= ((NOW() AT TIME ZONE 'Asia/Seoul')::date + INTERVAL '1 day') AT TIME ZONE 'Asia/Seoul' AND reserved_at < ((NOW() AT TIME ZONE 'Asia/Seoul')::date + INTERVAL '2 day') AT TIME ZONE 'Asia/Seoul'`;
+        timeLabel = ' (내일 필터)';
+      } else if (/이번\s*주/.test(q)) {
+        timeFilter = ` AND reserved_at >= (date_trunc('week', NOW() AT TIME ZONE 'Asia/Seoul'))::timestamp AT TIME ZONE 'Asia/Seoul' AND reserved_at < ((date_trunc('week', NOW() AT TIME ZONE 'Asia/Seoul') + INTERVAL '7 day'))::timestamp AT TIME ZONE 'Asia/Seoul'`;
+        timeLabel = ' (이번 주 필터)';
+      }
+
       const { rows: reservations } = await pool.query(
         `SELECT reservation_id, reserved_at, status, headcount
          FROM reservations
-         WHERE customer_id = $1 AND store_id = $2
+         WHERE customer_id = $1 AND store_id = $2${timeFilter}
          ORDER BY reserved_at DESC
          LIMIT 5`,
         [caseRow.customer_id, caseRow.store_id]
       );
-      const stepResult = `\n[${iterations + 1}회차 결과 - customers/${caseRow.customer_id}/reservations (현재 가게)]: ${JSON.stringify({ data: reservations })}`;
+      const stepResult = `\n[${iterations + 1}회차 결과 - customers/${caseRow.customer_id}/reservations${timeLabel}]: ${JSON.stringify({ data: reservations })}`;
       accumulatedContext += stepResult;
-      console.log(`   ⚡ [Skip LLM+HTTP] customers/${caseRow.customer_id}/reservations pre-fetch 완료 (${reservations.length}건)`);
+      console.log(`   ⚡ [Skip LLM+HTTP] customers/${caseRow.customer_id}/reservations pre-fetch 완료${timeLabel} (${reservations.length}건)`);
       pushSource('customer', caseRow.customer_id);
       reservations.forEach(r => pushSource('reservation', r.reservation_id));
-      apiCallTrace.push({ route: `customers/${caseRow.customer_id}/reservations`, method: 'SQL', ok: true, count: reservations.length });
+      apiCallTrace.push({ route: `customers/${caseRow.customer_id}/reservations${timeLabel}`, method: 'SQL', ok: true, count: reservations.length });
       iterations++;
     } catch (e) {
       console.error(`   └─ ❌ reservations pre-fetch 실패:`, e.message);
