@@ -284,11 +284,13 @@ const supervisorNode = async (state) => {
       intent = 'rag';
     }
   }
-  // 마찬가지로 "환불|교환|취소|반품" 일반 정책 질문도 rag 강제 (escalate/store로 잘못 가는 경우 방지)
-  if (q.match(/환불|교환|반품/) && intent !== 'api' && intent !== 'escalate') {
-    const isPolicyQuestion = q.match(/규정|정책|어떻게|며칠|기간|보통|가능한가|되나요|되요\?/);
-    if (isPolicyQuestion && !q.match(/해주|해줘|접수|처리/)) {
-      console.log(`   └─ 🔄 환불/교환 정책 질문 → rag로 전환`);
+  // "환불|교환|반품" 정책 질문은 LLM이 escalate로 잘못 분류해도 rag 강제
+  // 행동 요청 키워드("해주/해줘/접수/처리")가 없으면 정책 질문으로 간주
+  if (q.match(/환불|교환|반품/) && intent !== 'api') {
+    const isPolicyQuestion = q.match(/규정|정책|어떻게|며칠|기간|보통|가능한가|되나요|되요\?|되요|가능해|가능할까|되는지/);
+    const isActionRequest = q.match(/해주|해줘|접수|처리|진행|받아|넣어/);
+    if (isPolicyQuestion && !isActionRequest) {
+      if (intent !== 'rag') console.log(`   └─ 🔄 환불/교환 정책 질문 → rag로 전환 (was: ${intent})`);
       intent = 'rag';
     }
   }
