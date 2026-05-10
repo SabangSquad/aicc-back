@@ -15,7 +15,7 @@ const MAX_TOKENS_BY_PROMPT = {
   apiAgent: 128,
   memoryLoader: 192,
   ragAgent: 384,
-  composer: 512,
+  composer: 384,
   caseWriter: 512,
   solutionAnalyzer: 512,
 };

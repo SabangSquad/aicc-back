@@ -207,6 +207,16 @@
     - 수정 2: escalate 모호성 검사 완화 — memory에 주문/예약 ID 있으면 지시어 없어도 escalate 허용
       (같은 case 내 후속 대화로 간주, 상담사가 컨텍스트 보고 처리 가능)
     - 효과: 정책성 질문은 매뉴얼 기반 답변, 행동 요청은 ID 명시되거나 컨텍스트 있으면 escalate
+28. **fix: ContextOverflowError — composer 입력이 모델 한계(3072) 초과**
+
+    - 증상: prefetch + chained API 호출로 sourceData가 커지면서 composer 호출 시
+      `input 2599 + max_tokens 512 > 3072` 에러로 답변 생성 실패
+    - 수정 1: client.js MAX_TOKENS_BY_PROMPT의 composer 512 → 384
+    - 수정 2: bedrock.js composer 호출 시 truncate 한도 축소
+      - source_data: 3000 → 2000 자 (≈ 1300 토큰)
+      - history: 1000 → 600 자
+    - 수정 3: apiAgent context truncate 3000 → 2000, ragAgent retrieved_context 2500 → 1800
+    - 효과: 모델 컨텍스트 한계 안에 안전 마진 확보 (입력 ~2000 토큰 + 출력 384 토큰 < 3072)
 
 ### 대화 품질 개선 + 토큰 오버플로우 방지 + 솔루션 분석 안정화
 

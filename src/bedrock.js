@@ -541,7 +541,7 @@ const apiNode = async (state) => {
       user_input: state.userQuery,
       case_id: state.caseId,
       api_docs: apiSpec,
-      context: truncate(accumulatedContext, 3000, { keepEnd: true })
+      context: truncate(accumulatedContext, 2000, { keepEnd: true })
     });
 
 
@@ -667,7 +667,7 @@ const ragNode = async (state) => {
   const { context: docs, sources } = await retrieveKB(state.userQuery, state.storeId);
   const res = await invokePrompt("ragAgent", {
     user_query: state.userQuery,
-    retrieved_context: truncate(docs, 2500),
+    retrieved_context: truncate(docs, 1800),
     history: truncate(state.historySummary || "이전 맥락 없음", 1000, { keepEnd: true })
   });
   console.log(`   └─ 📎 매뉴얼 ${sources.length}건 매칭 (top score: ${sources[0]?.score ?? 'N/A'})`);
@@ -1068,8 +1068,9 @@ const composerNode = async (state) => {
   });
   const res = await invokePrompt("composer", {
     user_input: state.userQuery,
-    source_data: truncate(state.sourceData, 3000),
-    history: truncate(state.historySummary, 1000, { keepEnd: true }),
+    // 컨텍스트 한계(3072 토큰) 고려하여 입력 축소: 2000자 ≈ 1300 토큰
+    source_data: truncate(state.sourceData, 2000),
+    history: truncate(state.historySummary, 600, { keepEnd: true }),
     today
   });
 
