@@ -302,9 +302,19 @@ const supervisorNode = async (state) => {
     }
   }
 
+  // 가게 정보 카탈로그 질문(상품정보/메뉴/진료과목/가격)은 store 강제
+  // "내 주문 상품" 같은 본인 데이터 묻는 건 제외
+  if (intent !== 'store' && !q.match(/내\s|그거|이거|주문\s*\d|주문번호/)) {
+    const isStoreInfo = q.match(/^(상품\s*정보|상품\s*설명|상품\s*소개|메뉴|진료과목|진료\s*과|가격|영업시간|운영시간|주차|위치|주소|공지)/);
+    if (isStoreInfo) {
+      console.log(`   └─ 🔄 가게 정보 카탈로그 질문 → store 강제 (was: ${intent})`);
+      intent = 'store';
+    }
+  }
+
   // "도착/수령/언제 와/어디쯤/지금 어디" — 본인 배송/주문 조회 의도. 로그인 + 일반 정책 아니면 api 강제
   // "보통 도착 시간" 같은 일반 정책은 위 배송 정책 룰에서 이미 rag로 처리됨
-  if (state.customerId && intent !== 'api' && intent !== 'rag' && intent !== 'escalate') {
+  if (state.customerId && intent !== 'api' && intent !== 'rag' && intent !== 'escalate' && intent !== 'store') {
     const isPersonalDeliveryQuery = q.match(/도착\s*(예정|언제|시간|함|했)|언제\s*(와|도착|배달|받|올|올까)|어디(쯤|까지)|지금\s*어디|받을\s*수\s*있/);
     const isGeneralPolicy = q.match(/보통|일반적|평균|기본/);
     if (isPersonalDeliveryQuery && !isGeneralPolicy) {
@@ -1092,9 +1102,10 @@ const composerNode = async (state) => {
   });
   const res = await invokePrompt("composer", {
     user_input: state.userQuery,
-    // 컨텍스트 한계(3072 토큰) 고려하여 입력 축소: 2000자 ≈ 1300 토큰
-    source_data: truncate(state.sourceData, 2000),
-    history: truncate(state.historySummary, 600, { keepEnd: true }),
+    // 컨텍스트 한계(3072 토큰) 고려하여 입력 축소: 1500자 ≈ 1000 토큰
+    // prompt template + source + history + today 합 ~2200 + 출력 512 = 2712 < 3072
+    source_data: truncate(state.sourceData, 1500),
+    history: truncate(state.historySummary, 500, { keepEnd: true }),
     today
   });
 
