@@ -15,7 +15,7 @@ const MAX_TOKENS_BY_PROMPT = {
   apiAgent: 128,
   memoryLoader: 192,
   ragAgent: 384,
-  composer: 384,
+  composer: 640,  // 여러 주문/품목 나열 시 답변 짤리지 않도록 충분히 + 안전 마진
   caseWriter: 512,
   solutionAnalyzer: 512,
 };
