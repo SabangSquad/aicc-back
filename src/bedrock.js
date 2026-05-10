@@ -175,6 +175,15 @@ function trySupervisorShortcut(state) {
     return { intent: 'api' };
   }
 
+  // 5) "주문/배송 정보/상태/확인/조회/내역" — "내" 생략된 본인 데이터 조회. 로그인 시 api
+  if (/^(주문|배송)\s*(정보|상태|확인|조회|내역)/.test(q) && !hasComplexity.test(q) && state.customerId && (sc === '이커머스' || !sc)) {
+    return { intent: 'api' };
+  }
+  // 6) "예약 확인/조회/내역" — 병원/식당/null. "예약 정보"는 절차/규정 의도일 수 있어 제외
+  if (/^예약\s*(확인|조회|내역)/.test(q) && !hasComplexity.test(q) && state.customerId && (sc === '병원' || sc === '식당' || !sc)) {
+    return { intent: 'api' };
+  }
+
   return null;
 }
 
