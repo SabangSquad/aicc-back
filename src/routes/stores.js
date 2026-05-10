@@ -916,7 +916,11 @@ router.get('/:store_id/solutions', isStoreOwner, async (req, res) => {
     ].join('\n');
 
     const summaryText = cases
-      .map(r => `카테고리: ${r.category || '미분류'} | 감정: ${r.emotion || '없음'} | 요약: ${r.summary}`)
+      .slice(0, 30)
+      .map(r => {
+        const s = (r.summary || '').replace(/\s+/g, ' ').slice(0, 80);
+        return `${r.category || '미분류'}|${r.emotion || '없음'}|${s}`;
+      })
       .join('\n');
 
     // 4. AI 분석 (해석 + 솔루션만)
