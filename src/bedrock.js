@@ -249,11 +249,16 @@ const supervisorNode = async (state) => {
       if (intent === 'store' && q.match(/메뉴/) && !q.match(/환불|배송|상품|주문/)) return unsupported('이커머스에 메뉴 요청');
     }
     if (sc === '병원') {
-      if (intent === 'escalate') return unsupported('병원에 환불/교환/취소 요청');
+      // 환불/교환/반품 escalate는 차단. 단 예약 관련 escalate(예약취소/변경)는 허용.
+      if (intent === 'escalate' && q.match(/환불|교환|반품/) && !q.match(/예약/)) {
+        return unsupported('병원에 환불/교환 요청');
+      }
       if (intent === 'store' && q.match(/메뉴/) && !q.match(/진료|예약/)) return unsupported('병원에 메뉴 요청');
     }
     if (sc === '식당') {
-      if (intent === 'escalate') return unsupported('식당에 환불/교환/취소 요청');
+      if (intent === 'escalate' && q.match(/환불|교환|반품/) && !q.match(/예약/)) {
+        return unsupported('식당에 환불/교환 요청');
+      }
       if (intent === 'store' && q.match(/진료|과목/) && !q.match(/예약|메뉴/)) return unsupported('식당에 진료과목 요청');
     }
   }
