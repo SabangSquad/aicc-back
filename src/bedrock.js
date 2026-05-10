@@ -76,7 +76,7 @@ function isGuardrailObviouslySafe(q) {
   if (/^내\s|내\s(주문|배송|예약|정보|계정|품목|상품|이력)/.test(q)) return true;
 
   // 가게 운영 관련 명백한 키워드 포함
-  const safe = /(주문|배송|환불|교환|취소|예약|상품|메뉴|영업|위치|주소|주차|진료|편의|와이파이|화장실|픽업|포장|배달|결제|영수증|송장|운송장|택배|규정|정책)/;
+  const safe = /(주문|배송|도착|수령|환불|교환|취소|반품|예약|진료|상품|메뉴|가격|영업|위치|주소|주차|편의|와이파이|화장실|픽업|포장|배달|결제|영수증|송장|운송장|택배|규정|정책|문의|상담)/;
   if (safe.test(q)) return true;
 
   // 인사/단답
@@ -272,6 +272,24 @@ const supervisorNode = async (state) => {
       intent = 'api';
     } else {
       intent = 'store';
+    }
+  }
+
+  // "배송" 키워드 정책 질문은 rag로 강제 (보통/얼마나/며칠/기간 등 일반 정책)
+  // "내 배송", "배송 어디까지" 같은 본인 데이터 조회는 이미 api로 갔으므로 여기 안 옴
+  if (q.match(/배송/) && intent !== 'api' && intent !== 'rag') {
+    const isDeliveryPolicy = q.match(/보통|얼마나|며칠|기간|일반적|평균|소요|걸리/);
+    if (isDeliveryPolicy && !q.match(/내\s|^배송\s*(상태|확인|조회|어디|언제)/)) {
+      console.log(`   └─ 🔄 배송 일반 정책 질문 → rag로 전환`);
+      intent = 'rag';
+    }
+  }
+  // 마찬가지로 "환불|교환|취소|반품" 일반 정책 질문도 rag 강제 (escalate/store로 잘못 가는 경우 방지)
+  if (q.match(/환불|교환|반품/) && intent !== 'api' && intent !== 'escalate') {
+    const isPolicyQuestion = q.match(/규정|정책|어떻게|며칠|기간|보통|가능한가|되나요|되요\?/);
+    if (isPolicyQuestion && !q.match(/해주|해줘|접수|처리/)) {
+      console.log(`   └─ 🔄 환불/교환 정책 질문 → rag로 전환`);
+      intent = 'rag';
     }
   }
 
