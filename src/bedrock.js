@@ -287,7 +287,7 @@ const supervisorNode = async (state) => {
   // "환불|교환|반품" 정책 질문은 LLM이 escalate로 잘못 분류해도 rag 강제
   // 행동 요청 키워드("해주/해줘/접수/처리")가 없으면 정책 질문으로 간주
   if (q.match(/환불|교환|반품/) && intent !== 'api') {
-    const isPolicyQuestion = q.match(/규정|정책|어떻게|며칠|기간|보통|가능한가|되나요|되요\?|되요|가능해|가능할까|되는지/);
+    const isPolicyQuestion = q.match(/규정|정책|어떻게|며칠|기간|보통|가능한가|되나요|되요\?|되요|가능해|가능할까|되는지|할\s*수\s*있/);
     const isActionRequest = q.match(/해주|해줘|접수|처리|진행|받아|넣어/);
     if (isPolicyQuestion && !isActionRequest) {
       if (intent !== 'rag') console.log(`   └─ 🔄 환불/교환 정책 질문 → rag로 전환 (was: ${intent})`);
@@ -684,9 +684,10 @@ const escalateNode = async (state) => {
   console.log(`🚨 [Node 5-2: Escalate] 상담사 호출 처리 중...`);
 
   // 모호성 검사 — 어떤 주문/예약을 처리해야 할지 명확하지 않으면 재질문
+  // memoryHasTarget이 있으면 같은 case 내 후속 대화로 간주, 지시어 없어도 escalate 허용
+  // (예: "헤드셋 교환해줘" + 직전 턴에서 주문 320 안내 → 상담사가 컨텍스트 보고 처리)
   const q = state.userQuery;
   const hasExplicitId = /주문\s*번?호?\s*\d|예약\s*번?호?\s*\d|\b\d{2,}\b/.test(q);
-  const hasContextRef = /그거|이거|저거|방금|그\s*(주문|예약|상품|건)/.test(q);
   const { rows: caseLink } = await pool.query(
     'SELECT order_id, reservation_id FROM cases WHERE case_id = $1',
     [state.caseId]
@@ -694,7 +695,7 @@ const escalateNode = async (state) => {
   const caseHasTarget = caseLink[0]?.order_id != null || caseLink[0]?.reservation_id != null;
   const memoryHasTarget = state.historySummary && /주문\s*\d|예약\s*\d|order_id|reservation_id/.test(state.historySummary);
 
-  if (!hasExplicitId && !caseHasTarget && !(hasContextRef && memoryHasTarget)) {
+  if (!hasExplicitId && !caseHasTarget && !memoryHasTarget) {
     console.log(`   └─ ❓ 처리 대상 불명확 → 재질문 (escalate 보류)`);
     // 환불/교환/취소 키워드별 안내 분기
     let askMessage = "어떤 주문이나 예약을 도와드릴지 알려주시면 진행해 드릴게요. 주문번호나 구체적인 내용을 함께 말씀해 주세요.";
