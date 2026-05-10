@@ -160,13 +160,18 @@ function trySupervisorShortcut(state) {
   }
 
   // 2) "내 정보/계정/프로필" — 로그인 시 항상 api
-  if (/^내\s*(정보|계정|프로필)\b/.test(q) && state.customerId) {
+  // 한글에서 \b는 단어경계로 작동 안 하므로 (\s|$|을|를|이|가) 명시적으로 처리
+  if (/^내\s*(정보|계정|프로필)(\s|$|을|를|이|가)/.test(q) && state.customerId) {
     return { intent: 'api' };
   }
 
   // 3) "내 주문/배송" 단순 조회 — 날짜/행동 동사 없을 때만, 이커머스/null 업종에서만
   const hasComplexity = /\d{1,2}월|\d{1,2}일|내일|모레|오늘|어제|이번\s*주|다음\s*주|취소|환불|교환|변경|할게|해줘|싶/;
-  if (/^내\s*(주문|배송)\b/.test(q) && !hasComplexity.test(q) && state.customerId && (sc === '이커머스' || !sc)) {
+  if (/^내\s*(주문|배송)(\s|$|을|를|이|가)/.test(q) && !hasComplexity.test(q) && state.customerId && (sc === '이커머스' || !sc)) {
+    return { intent: 'api' };
+  }
+  // 4) "내 예약" 단순 조회 — 병원/식당/null 업종에서만
+  if (/^내\s*예약(\s|$|을|를|이|가)/.test(q) && !hasComplexity.test(q) && state.customerId && (sc === '병원' || sc === '식당' || !sc)) {
     return { intent: 'api' };
   }
 

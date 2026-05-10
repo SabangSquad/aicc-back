@@ -62,6 +62,12 @@
     - thread_id=caseId로 같은 케이스 재요청 시 이전 턴의 `sources`가 다음 턴 응답에 묻어나오는 문제 차단
     - `app.stream()` 초기 state에 `sources: null, apiCallTrace: null` 명시
     - `graphState` 채널에서 의미 없는 `decisionTrace` 제거 (외부 변수로만 누적)
+11. **fix: Supervisor regex shortcut의 한글 단어경계(`\b`) 미작동 문제**
+
+    - JS의 `\b`는 ASCII word boundary(`[A-Za-z0-9_]`)만 인식 → 한글-공백 사이는 단어경계로 인식 안 함
+    - 결과: "내 주문 상태 알려줘" 같은 명확한 api 패턴이 shortcut에서 누락 → LLM 호출되어 rag/store로 오분류
+    - 한글 조사(`을|를|이|가`) + 공백/문장끝 명시적으로 처리하도록 변경
+    - "내 예약" 패턴(병원/식당)도 shortcut에 추가
 
 ### 대화 품질 개선 + 토큰 오버플로우 방지 + 솔루션 분석 안정화
 
