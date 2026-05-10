@@ -683,6 +683,36 @@ const ragNode = async (state) => {
 const escalateNode = async (state) => {
   console.log(`🚨 [Node 5-2: Escalate] 상담사 호출 처리 중...`);
 
+  // 모호성 검사 — 어떤 주문/예약을 처리해야 할지 명확하지 않으면 재질문
+  const q = state.userQuery;
+  const hasExplicitId = /주문\s*번?호?\s*\d|예약\s*번?호?\s*\d|\b\d{2,}\b/.test(q);
+  const hasContextRef = /그거|이거|저거|방금|그\s*(주문|예약|상품|건)/.test(q);
+  const { rows: caseLink } = await pool.query(
+    'SELECT order_id, reservation_id FROM cases WHERE case_id = $1',
+    [state.caseId]
+  );
+  const caseHasTarget = caseLink[0]?.order_id != null || caseLink[0]?.reservation_id != null;
+  const memoryHasTarget = state.historySummary && /주문\s*\d|예약\s*\d|order_id|reservation_id/.test(state.historySummary);
+
+  if (!hasExplicitId && !caseHasTarget && !(hasContextRef && memoryHasTarget)) {
+    console.log(`   └─ ❓ 처리 대상 불명확 → 재질문 (escalate 보류)`);
+    // 환불/교환/취소 키워드별 안내 분기
+    let askMessage = "어떤 주문이나 예약을 도와드릴지 알려주시면 진행해 드릴게요. 주문번호나 구체적인 내용을 함께 말씀해 주세요.";
+    if (q.match(/교환/)) {
+      askMessage = "어떤 상품을 교환하고 싶으신가요? 주문번호와 교환 사유를 알려주시면 빠르게 도와드릴게요.";
+    } else if (q.match(/환불/)) {
+      askMessage = "어떤 주문을 환불하고 싶으신가요? 주문번호와 환불 사유를 알려주시면 빠르게 도와드릴게요.";
+    } else if (q.match(/취소/) && state.storeCategory === '이커머스') {
+      askMessage = "어떤 주문을 취소하고 싶으신가요? 주문번호를 알려주시면 진행해 드릴게요.";
+    } else if (q.match(/취소|변경/) && (state.storeCategory === '병원' || state.storeCategory === '식당')) {
+      askMessage = "어떤 예약을 변경/취소하고 싶으신가요? 예약 날짜·시간 또는 예약번호를 알려주세요.";
+    }
+    return {
+      finalAnswer: askMessage,
+      suggestedQuestions: []
+    };
+  }
+
   // 대화 조회 → AI 분석 (요약 + 감정 + 추천 답변)
   const { rows: msgs } = await pool.query(
     "SELECT speaker, content FROM messages WHERE case_id = $1 ORDER BY occurred_at ASC",
