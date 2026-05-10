@@ -60,7 +60,6 @@ const graphState = {
     retryCount: null,
     sources: null,
     apiCallTrace: null,
-    decisionTrace: null,
   }
 };
 
@@ -1054,6 +1053,8 @@ export async function processAICC(userQuery, caseId, storeId, customerId, res) {
         productKeyword: null,
         reservationType: null,
         reason: null,
+        sources: null,
+        apiCallTrace: null,
       },
       config
     );

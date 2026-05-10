@@ -57,6 +57,11 @@
    - k8s 환경에서 idle TCP 끊김으로 발생하는 자동 재연결 노이즈 다수
    - `socket.keepAlive: 5000` + 점진적 `reconnectStrategy` 추가로 끊김 자체 감소
    - `Socket closed` / `ECONNRESET` / `Connection timeout` 메시지는 `console.warn`으로 강등하여 실제 문제와 분리
+10. **체크포인트 carry-over 방지 — sources/apiCallTrace 초기 리셋 추가**
+
+    - thread_id=caseId로 같은 케이스 재요청 시 이전 턴의 `sources`가 다음 턴 응답에 묻어나오는 문제 차단
+    - `app.stream()` 초기 state에 `sources: null, apiCallTrace: null` 명시
+    - `graphState` 채널에서 의미 없는 `decisionTrace` 제거 (외부 변수로만 누적)
 
 ### 대화 품질 개선 + 토큰 오버플로우 방지 + 솔루션 분석 안정화
 
