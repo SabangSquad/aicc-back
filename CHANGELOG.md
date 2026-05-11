@@ -496,6 +496,16 @@
     - 수정 2: composer max_tokens 512 → 400
     - 수정 3: source_data truncate 1200 → 1000자, history 500 → 400자
     - 효과: 입력 ~1630 + 출력 400 = 2030 < 3072 (안전 마진 충분)
+57. **feat: 단순 불만/감정 표현 LLM 스킵 — complaint intent 추가 (즉답)**
+
+    - 증상: "왜 이렇게 어렵죠" 같은 단순 항의도 supervisor → api/store + composer로 다 거쳐 ~10초 소요
+    - 의도: 짧은 감정 표현엔 사과 + 재질문만 빠르게 (LLM 호출 0회)
+    - 수정 1: `complaint` intent 추가
+      - supervisor regex shortcut 패턴: `왜 이렇게 어렵/어려/복잡/불편/힘들/짜증`, `짜증나`, `답답해`, `불편해`, `어려워`, `싫어` 등 + 40자 이하
+    - 수정 2: graph 엣지에 complaint → composer 라우팅
+    - 수정 3: composerNode에서 complaint intent면 LLM 호출 없이 즉시 템플릿 응답
+      - "불편을 드려 죄송합니다. 어떤 부분이 어려우신지 구체적으로 말씀해 주시면 도와드릴게요."
+    - 효과: 단순 불만은 ~0초 (LLM 호출 0), 사용자에게 빠른 사과 + 명확한 재질문
 
 ### 대화 품질 개선 + 토큰 오버플로우 방지 + 솔루션 분석 안정화
 

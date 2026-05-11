@@ -167,6 +167,12 @@ function trySupervisorShortcut(state) {
     };
   }
 
+  // 1-2) 단순 불만/감정 표현 — LLM 호출 없이 빠른 사과 + 재질문 (composer 템플릿)
+  // "왜 이렇게 어렵죠/어려워요", "짜증나", "답답하네", "불편해요" 류
+  if (q.length <= 40 && /왜\s*이렇게\s*(어렵|어려|복잡|불편|힘들|싫|짜증)|짜증\s*나|화\s*나|답답해?|답답하|불편해|어렵네요?|어려워|싫어요?/.test(q)) {
+    return { intent: 'complaint' };
+  }
+
   // 2) "내 정보/계정/프로필" — 로그인 시 항상 api
   // 한글에서 \b는 단어경계로 작동 안 하므로 (\s|$|을|를|이|가) 명시적으로 처리
   if (/^내\s*(정보|계정|프로필)(\s|$|을|를|이|가)/.test(q) && state.customerId) {
@@ -1302,6 +1308,15 @@ const composerNode = async (state) => {
     };
   }
 
+  // 단순 불만/감정 표현은 LLM 호출 없이 즉시 사과 + 재질문 응답
+  if (state.intent === 'complaint') {
+    console.log(`   ⚡ [Skip LLM] Complaint 템플릿 응답`);
+    return {
+      finalAnswer: '불편을 드려 죄송합니다. 어떤 부분이 어려우신지 구체적으로 말씀해 주시면 도와드릴게요.',
+      suggestedQuestions: [],
+    };
+  }
+
   console.log(`✍️ [Node 8/9: Composer] 답변 구성 중...`);
 
   // 시간까지 포함된 현재 KST (매뉴얼의 "전일 오후 6시" 같은 cutoff와 비교 필요)
@@ -1381,6 +1396,7 @@ workflow.addEdge("pre", "supervisor");
 workflow.addConditionalEdges("supervisor", (state) => {
   if (state.intent === 'unsupported') return 'end';
   if (state.intent === 'greeting') return 'composer';
+  if (state.intent === 'complaint') return 'composer';
   return state.intent;
 }, {
   api: "api",
@@ -1546,6 +1562,7 @@ export async function processAICC(userQuery, caseId, storeId, customerId, res) {
       api:         "데이터 조회 기반 답변",
       store:       "가게 정보 조회",
       greeting:    "인사",
+      complaint:   "불만 응대",
       escalate:    "상담사 연결",
     };
 
