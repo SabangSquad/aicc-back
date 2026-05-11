@@ -1203,9 +1203,8 @@ const composerNode = async (state) => {
   });
   const res = await invokePrompt("composer", {
     user_input: state.userQuery,
-    // 컨텍스트 한계(3072 토큰) 고려하여 입력 축소: 1500자 ≈ 1000 토큰
-    // prompt template + source + history + today 합 ~2200 + 출력 512 = 2712 < 3072
-    source_data: truncate(state.sourceData, 1500),
+    // 컨텍스트 한계(3072 토큰) 고려: prompt(~400) + source(~800) + history(~330) + 입력(~80) = ~1600 + 출력 512 = 2112 < 3072
+    source_data: truncate(state.sourceData, 1200),
     history: truncate(state.historySummary, 500, { keepEnd: true }),
     today
   });
