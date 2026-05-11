@@ -30,7 +30,8 @@ docker-data/
 
 # 더미데이터
 data/
-scripts/
+scripts/*
+!scripts/recategorize-cases.js
 src/migration.js
 
 # 테스트 케이스
