@@ -344,6 +344,16 @@ const supervisorNode = async (state) => {
     }
   }
 
+  // "상담 N" / "주문 N" / "예약 N" 명시적 ID + 본인 데이터 의도 → api 강제 (intent 무관)
+  // 예: "상담 1106 답변 언제 와?", "주문 503 상태?", "예약 27 확인"
+  if (state.customerId && intent !== 'api') {
+    const hasExplicitEntityId = q.match(/(상담|주문|예약)\s*(번?호?)?\s*\d{2,}/);
+    if (hasExplicitEntityId) {
+      console.log(`   └─ 🔄 명시적 ID(${hasExplicitEntityId[0]}) → api 강제 (was: ${intent})`);
+      intent = 'api';
+    }
+  }
+
   // 페이지네이션 후속 요청 → api 강제 (intent 무관, escalate/rag/store 다 override)
   // "다음 페이지", "N페이지", "더 보여줘" 등 + memory에 list 표시 흔적
   if (state.customerId && intent !== 'api') {
@@ -530,6 +540,42 @@ const apiNode = async (state) => {
       iterations = 2;
     } catch (e) {
       console.error(`   └─ ❌ orders pre-fetch 실패:`, e.message);
+    }
+  }
+
+  // "상담 N 답변 언제 와?" 같이 명시적 case_id 언급 → 본인 case 단건 조회 prefetch
+  const caseIdMatch = state.userQuery.match(/상담\s*(번?호?)?\s*(\d{2,})/);
+  if (caseRow && caseIdMatch && parseInt(caseIdMatch[2], 10) !== state.caseId) {
+    const targetCaseId = parseInt(caseIdMatch[2], 10);
+    try {
+      const { rows: targetCase } = await pool.query(
+        `SELECT c.case_id, c.status, c.category, c.summary, c.emotion, c.created_at, c.closed_at,
+                (SELECT content FROM messages WHERE case_id = c.case_id AND speaker = '챗봇'
+                 ORDER BY occurred_at DESC LIMIT 1) AS last_bot_msg,
+                (SELECT occurred_at FROM messages WHERE case_id = c.case_id AND speaker = '챗봇'
+                 ORDER BY occurred_at DESC LIMIT 1) AS last_bot_at
+         FROM cases c
+         WHERE c.case_id = $1 AND c.customer_id = $2 AND c.store_id = $3`,
+        [targetCaseId, caseRow.customer_id, caseRow.store_id]
+      );
+      if (targetCase.length === 0) {
+        accumulatedContext += `\n[상담 ${targetCaseId} 조회 결과]: 해당 상담을 찾을 수 없거나 본인 상담이 아닙니다.`;
+        console.log(`   ⚠️ [Skip prefetch] 상담 ${targetCaseId} 본인 소유 아님 또는 미존재`);
+      } else {
+        const t = targetCase[0];
+        const summary = t.summary ? t.summary.replace(/\n+/g, ' ').slice(0, 150) : '요약 없음';
+        const date = t.created_at ? new Date(t.created_at).toISOString().split('T')[0] : '-';
+        const closedAt = t.closed_at ? new Date(t.closed_at).toISOString().replace('T', ' ').slice(0, 16) : '-';
+        const lastBotAt = t.last_bot_at ? new Date(t.last_bot_at).toISOString().replace('T', ' ').slice(0, 16) : '-';
+        const lastBotMsg = t.last_bot_msg ? t.last_bot_msg.replace(/\n+/g, ' ').slice(0, 200) : '없음';
+        accumulatedContext += `\n[상담 ${targetCaseId} 단건 조회]\n상담번호: ${targetCaseId}, 상태: ${t.status}, 카테고리: ${t.category || '-'}, 감정: ${t.emotion || '-'}, 접수: ${date}, 종료: ${closedAt}, 마지막 챗봇 답변 시각: ${lastBotAt}, 마지막 챗봇 답변: "${lastBotMsg}", 요약: ${summary}`;
+        console.log(`   ⚡ [Skip LLM+HTTP] 상담 ${targetCaseId} 단건 prefetch 완료 (status=${t.status})`);
+        pushSource('case', targetCaseId);
+        apiCallTrace.push({ route: `cases/${targetCaseId}`, method: 'SQL', ok: true });
+      }
+      iterations++;
+    } catch (e) {
+      console.error(`   └─ ❌ 상담 ${targetCaseId} prefetch 실패:`, e.message);
     }
   }
 
