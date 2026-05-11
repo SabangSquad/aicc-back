@@ -362,6 +362,18 @@ const supervisorNode = async (state) => {
     }
   }
 
+  // "예약된 거 있는지/예약 확인/예약 잡혀있/예약 됐는지" 본인 예약 조회 → api 강제
+  // 신규 예약 의사("예약하고 싶어", "잡아줘")가 아니라 기존 예약 확인 패턴
+  // 비로그인이어도 api로 보내서 "로그인 필요" 안내로 끝나게 (store action → 폼 띄우는 것 방지)
+  if (intent !== 'api') {
+    const isExistingReservationCheck = q.match(/예약(된|한)\s*(거|것|게|건)?\s*(있|되|잡혀)|예약\s*확인|예약\s*조회|예약\s*되어\s*있|예약\s*잡혀\s*있|예약\s*있나|예약\s*있어|예약\s*했는지|예약\s*됐는지/);
+    const isNewReservationIntent = q.match(/예약하고\s*싶|예약\s*잡아|예약해\s*줘|새로\s*예약|예약\s*가능한\s*시간/);
+    if (isExistingReservationCheck && !isNewReservationIntent) {
+      console.log(`   └─ 🔄 본인 예약 조회 → api 강제 (was: ${intent}, customerId=${state.customerId ?? 'none'})`);
+      intent = 'api';
+    }
+  }
+
   // 페이지네이션 후속 요청 → api 강제 (intent 무관, escalate/rag/store 다 override)
   // "다음 페이지", "N페이지", "더 보여줘" 등 + memory에 list 표시 흔적
   if (state.customerId && intent !== 'api') {
@@ -430,9 +442,15 @@ const apiNode = async (state) => {
     console.log(`   └─ 🔒 로그인 필요 — customer_id 없음`);
     let loginMessage = "해당 정보를 조회하려면 로그인이 필요합니다.";
     const q = state.userQuery;
-    if (q.match(/주문|배송/)) loginMessage = "주문/배송 정보를 조회하려면 로그인이 필요합니다.";
-    else if (q.match(/예약\s*(확인|조회)/)) loginMessage = "예약 정보를 확인하려면 로그인이 필요합니다.";
-    else if (q.match(/내\s*정보/)) loginMessage = "고객 정보를 조회하려면 로그인이 필요합니다.";
+    if (q.match(/예약(된|한)?\s*(거|것|게|건|확인|조회|있는|되어|잡혀|있나|있어|했는지|됐는지)/)) {
+      loginMessage = "예약 정보를 확인하려면 로그인이 필요합니다.";
+    } else if (q.match(/주문|배송/)) {
+      loginMessage = "주문/배송 정보를 조회하려면 로그인이 필요합니다.";
+    } else if (q.match(/내\s*정보/)) {
+      loginMessage = "고객 정보를 조회하려면 로그인이 필요합니다.";
+    } else if (q.match(/상담|문의/)) {
+      loginMessage = "상담/문의 내역을 조회하려면 로그인이 필요합니다.";
+    }
     return {
       finalAnswer: "__LOGIN_REQUIRED__",
       loginMessage,
