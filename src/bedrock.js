@@ -860,6 +860,14 @@ const apiNode = async (state) => {
     try {
       console.log(`   📚 [api+rag] 정책 질문 감지 → 매뉴얼 추가 검색`);
       const { context: manualDocs, sources: manualSources } = await retrieveKB(q, state.storeId);
+      if (manualSources?.length) {
+        console.log(`      └─ 매칭된 매뉴얼:`);
+        manualSources.forEach(s => {
+          console.log(`         · [score=${s.score}] ${s.title} (카테고리: ${s.category})`);
+        });
+      } else {
+        console.log(`      └─ ⚠️ 매뉴얼 0건 매칭`);
+      }
       if (manualDocs) {
         accumulatedContext += `\n\n[참고 매뉴얼]: ${manualDocs}`;
         if (manualSources?.length) dataSources.push(...manualSources);
