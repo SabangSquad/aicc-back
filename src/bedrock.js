@@ -574,11 +574,11 @@ const apiNode = async (state) => {
       const start = offset + 1;
       const end = offset + pastCases.length;
 
-      // 압축 텍스트 포맷
+      // 압축 텍스트 포맷 — 상담번호/날짜/요약만 (간결)
       const compactLines = pastCases.map(c => {
         const date = c.created_at ? new Date(c.created_at).toISOString().split('T')[0] : '-';
-        const summary = c.summary ? c.summary.replace(/\n+/g, ' ').slice(0, 80) : '요약 없음';
-        return `상담 ${c.case_id} | ${date} | ${c.status} | 카테고리: ${c.category || '-'} | 감정: ${c.emotion || '-'} | 요약: ${summary}`;
+        const summary = c.summary ? c.summary.replace(/\n+/g, ' ').slice(0, 100) : '요약 없음';
+        return `상담 ${c.case_id} | ${date} | ${summary}`;
       }).join('\n');
 
       let pagingNote = '';
@@ -723,11 +723,12 @@ const apiNode = async (state) => {
         };
       }
 
-      // customers/X/cases 응답은 너무 길어질 수 있으므로 압축 텍스트로 변환
+      // customers/X/cases 응답은 너무 길어질 수 있으므로 압축 텍스트로 변환 (상담번호/날짜/요약만)
       if (/^customers\/[^/]+\/cases\/?$/.test(callInfo.r) && Array.isArray(res.data?.data)) {
         const compact = res.data.data.slice(0, 5).map(c => {
           const date = c.created_at ? new Date(c.created_at).toISOString().split('T')[0] : '-';
-          return `상담 ${c.case_id} | ${date} | ${c.status} | 카테고리: ${c.category || '-'} | 감정: ${c.emotion || '-'}`;
+          const summary = c.summary ? c.summary.replace(/\n+/g, ' ').slice(0, 100) : '요약 없음';
+          return `상담 ${c.case_id} | ${date} | ${summary}`;
         }).join('\n');
         filteredData = `${compact || '(상담 없음)'} (총 ${res.data.total ?? res.data.data.length}건)`;
       }
@@ -767,7 +768,11 @@ const apiNode = async (state) => {
 
   // composer로 넘기기 전에 내부 hint(_note) 제거 — 사용자에게 노출되면 안 됨
   // _note는 apiAgent 다음 행동 결정용이라 composer 단계에선 불필요
-  accumulatedContext = accumulatedContext.replace(/,\s*"_note"\s*:\s*"[^"]*"/g, '');
+  // JSON에서 _note 필드 제거 (앞 콤마/뒤 콤마 둘 다 cover)
+  accumulatedContext = accumulatedContext.replace(/"_note"\s*:\s*"[^"]*"\s*,?\s*/g, '');
+  accumulatedContext = accumulatedContext.replace(/,\s*}/g, '}'); // 끝의 trailing comma 정리
+  // 내부 회차 라벨도 단순화 ([N회차 결과 - cases/X]: → 빈 줄 구분자만)
+  accumulatedContext = accumulatedContext.replace(/\[\d+회차 결과 - [^\]]*\]:\s*/g, '');
 
   // 정책성 질문(취소/환불/교환 + 가능/규정/어떻게 등)이면 매뉴얼도 함께 검색해서 sourceData에 추가
   // 이후 composer가 본인 데이터 + 매뉴얼 결합한 정확한 답변 생성
