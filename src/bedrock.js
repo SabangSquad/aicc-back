@@ -679,7 +679,12 @@ const apiNode = async (state) => {
          LIMIT 5`,
         [caseRow.customer_id, caseRow.store_id]
       );
-      const stepResult = `\n[${iterations + 1}회차 결과 - customers/${caseRow.customer_id}/reservations${timeLabel}]: ${JSON.stringify({ data: reservations })}`;
+      // 압축 텍스트 — headcount는 "명" 단위로 명시 (LLM이 "인분"으로 환각 방지)
+      const reservationLines = reservations.map(r => {
+        const dt = r.reserved_at ? new Date(r.reserved_at).toISOString().replace('T', ' ').slice(0, 16) : '-';
+        return `예약 ${r.reservation_id} | ${dt} | ${r.status} | ${r.headcount || '?'}명`;
+      }).join('\n');
+      const stepResult = `\n[${iterations + 1}회차 결과 - 본인 예약${timeLabel} ${reservations.length}건]:\n${reservationLines || '(예약 없음)'}`;
       accumulatedContext += stepResult;
       console.log(`   ⚡ [Skip LLM+HTTP] customers/${caseRow.customer_id}/reservations pre-fetch 완료${timeLabel} (${reservations.length}건)`);
       pushSource('customer', caseRow.customer_id);
