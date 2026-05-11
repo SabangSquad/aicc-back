@@ -301,10 +301,10 @@ const supervisorNode = async (state) => {
       intent = 'rag';
     }
   }
-  // "환불|교환|반품|취소" 정책 질문은 LLM이 escalate로 잘못 분류해도 rag 강제
+  // "환불|교환|반품|취소|변경" 정책 질문은 LLM이 escalate로 잘못 분류해도 rag 강제
   // 행동 요청 키워드("해주/해줘/접수/처리")가 없으면 정책 질문으로 간주
   // 단, 명시적 본인 ID(주문번호/예약번호)가 있으면 데이터 검증 필요 → api로 (apiNode가 매뉴얼도 함께 fetch)
-  if (q.match(/환불|교환|반품|취소/) && intent !== 'api') {
+  if (q.match(/환불|교환|반품|취소|변경/) && intent !== 'api') {
     const isPolicyQuestion = q.match(/규정|정책|어떻게|며칠|기간|보통|가능|되나요|되요|되는지|할\s*수\s*있/);
     const isActionRequest = q.match(/해주|해줘|접수|처리|진행|받아|넣어/);
     const hasExplicitId = /주문\s*번?호?\s*\d|예약\s*번?호?\s*\d|\b\d{2,}\b/.test(q);
@@ -313,7 +313,7 @@ const supervisorNode = async (state) => {
         if (intent !== 'api') console.log(`   └─ 🔄 본인 ID + 정책 질문 → api로 전환 (데이터+매뉴얼 결합 필요, was: ${intent})`);
         intent = 'api';
       } else {
-        if (intent !== 'rag') console.log(`   └─ 🔄 환불/교환/취소 정책 질문 → rag로 전환 (was: ${intent})`);
+        if (intent !== 'rag') console.log(`   └─ 🔄 환불/교환/취소/변경 정책 질문 → rag로 전환 (was: ${intent})`);
         intent = 'rag';
       }
     }
@@ -853,10 +853,10 @@ const apiNode = async (state) => {
   // 내부 회차 라벨도 단순화 ([N회차 결과 - cases/X]: → 빈 줄 구분자만)
   accumulatedContext = accumulatedContext.replace(/\[\d+회차 결과 - [^\]]*\]:\s*/g, '');
 
-  // 정책성 질문(취소/환불/교환 + 가능/규정/어떻게 등)이면 매뉴얼도 함께 검색해서 sourceData에 추가
+  // 정책성 질문(취소/환불/교환/변경 + 가능/규정/어떻게 등)이면 매뉴얼도 함께 검색해서 sourceData에 추가
   // 이후 composer가 본인 데이터 + 매뉴얼 결합한 정확한 답변 생성
   const q = state.userQuery;
-  if (q.match(/환불|교환|반품|취소/) && q.match(/규정|정책|어떻게|며칠|기간|보통|가능|되나요|되요|되는지|할\s*수\s*있/)) {
+  if (q.match(/환불|교환|반품|취소|변경/) && q.match(/규정|정책|어떻게|며칠|기간|보통|가능|되나요|되요|되는지|할\s*수\s*있/)) {
     try {
       console.log(`   📚 [api+rag] 정책 질문 감지 → 매뉴얼 추가 검색`);
       const { context: manualDocs, sources: manualSources } = await retrieveKB(q, state.storeId);
