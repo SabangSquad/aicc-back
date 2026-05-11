@@ -362,12 +362,19 @@ const supervisorNode = async (state) => {
     }
   }
 
-  // "예약된 거 있는지/예약 확인/예약 잡혀있/예약 됐는지" 본인 예약 조회 → api 강제
+  // "예약된 거 있는지/예약 확인/예약 잡혀있/예약 됐는지/예약한 거 언제" 본인 예약 조회 → api 강제
   // 신규 예약 의사("예약하고 싶어", "잡아줘")가 아니라 기존 예약 확인 패턴
   // 비로그인이어도 api로 보내서 "로그인 필요" 안내로 끝나게 (store action → 폼 띄우는 것 방지)
   if (intent !== 'api') {
-    const isExistingReservationCheck = q.match(/예약(된|한)\s*(거|것|게|건)?\s*(있|되|잡혀)|예약\s*확인|예약\s*조회|예약\s*되어\s*있|예약\s*잡혀\s*있|예약\s*있나|예약\s*있어|예약\s*했는지|예약\s*됐는지/);
-    const isNewReservationIntent = q.match(/예약하고\s*싶|예약\s*잡아|예약해\s*줘|새로\s*예약|예약\s*가능한\s*시간/);
+    const isExistingReservationCheck = q.match(
+      /예약(된|한)\s*(거|것|게|건)/  // "예약한 거", "예약된 것" 등 (뒤 표현 무관, 본인 예약 가리킴)
+      + /|예약\s*확인|예약\s*조회|예약\s*내역/
+      + /|예약\s*되어\s*있|예약\s*잡혀\s*있/
+      + /|예약\s*있나|예약\s*있어|예약\s*있는지/
+      + /|예약\s*했는지|예약\s*됐는지/
+      + /|예약\s*(언제|시간|날짜)/  // "예약 언제", "예약 시간", "예약 날짜" 본인 예약 시점 조회
+    );
+    const isNewReservationIntent = q.match(/예약하고\s*싶|예약\s*잡아|예약해\s*줘|새로\s*예약|예약\s*가능한\s*시간|예약\s*가능한\s*날짜/);
     if (isExistingReservationCheck && !isNewReservationIntent) {
       console.log(`   └─ 🔄 본인 예약 조회 → api 강제 (was: ${intent}, customerId=${state.customerId ?? 'none'})`);
       intent = 'api';
