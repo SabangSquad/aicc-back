@@ -287,6 +287,17 @@
       - 상담(case) 라벨은 case_id로 식별 명시
       - "_note", "_hint" 같이 _로 시작하는 내부 메모는 사용자 노출 금지 명시
     - 효과: 과거 종료된 상담 5건이 상담번호·카테고리·감정·요약으로 정리되어 표시
+36. **fix: 상담 많은 사용자(68건)에서 또 ContextOverflow — cases 데이터 압축**
+
+    - 증상: customers/X/cases가 기본 20건 반환 → input 2868 + 512 > 3072 overflow
+    - 원인: cases prefetch + LLM의 추가 list API 호출이 모두 JSON 풀 페이로드 (필드 9개 × 20건)
+    - 수정 1: cases prefetch 출력을 JSON → 압축 텍스트로 변환
+      - 한 줄당 "상담 1107 | 2026-05-10 | AI자동해결 | 카테고리: X | 감정: Y | 요약: ..." 형태
+      - 5건 × ~80자 = ~400자 (기존 대비 70% 감소)
+    - 수정 2: LLM이 customers/X/(orders|reservations|cases) 호출 시 자동 `?limit=5` 주입
+      (기존엔 기본 20건 반환되던 것을 5건으로 제한)
+    - 수정 3: customers/X/cases LLM 호출 응답도 동일하게 압축 텍스트로 변환 (5건 × 80자)
+    - 효과: cases 많은 사용자도 sourceData 안정적으로 1000자 이하 유지
 
 ### 대화 품질 개선 + 토큰 오버플로우 방지 + 솔루션 분석 안정화
 

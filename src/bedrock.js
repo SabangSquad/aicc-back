@@ -534,9 +534,15 @@ const apiNode = async (state) => {
          ORDER BY created_at DESC LIMIT 5`,
         [caseRow.customer_id, caseRow.store_id, state.caseId]
       );
-      const stepResult = `\n[${iterations + 1}회차 결과 - customers/${caseRow.customer_id}/cases (과거 종료된 상담)]: ${JSON.stringify({ data: pastCases })}`;
+      // 압축 텍스트 포맷 (JSON 대신) — 토큰 절약
+      const compactLines = pastCases.map(c => {
+        const date = c.created_at ? new Date(c.created_at).toISOString().split('T')[0] : '-';
+        const summary = c.summary ? c.summary.replace(/\n+/g, ' ').slice(0, 80) : '요약 없음';
+        return `상담 ${c.case_id} | ${date} | ${c.status} | 카테고리: ${c.category || '-'} | 감정: ${c.emotion || '-'} | 요약: ${summary}`;
+      }).join('\n');
+      const stepResult = `\n[${iterations + 1}회차 결과 - 과거 종료된 상담 ${pastCases.length}건]:\n${compactLines || '(과거 종료 상담 없음)'}`;
       accumulatedContext += stepResult;
-      console.log(`   ⚡ [Skip LLM+HTTP] customers/${caseRow.customer_id}/cases pre-fetch 완료 (${pastCases.length}건)`);
+      console.log(`   ⚡ [Skip LLM+HTTP] cases prefetch (closed) 완료 (${pastCases.length}건)`);
       pushSource('customer', caseRow.customer_id);
       pastCases.forEach(c => pushSource('case', c.case_id));
       apiCallTrace.push({ route: `customers/${caseRow.customer_id}/cases (closed)`, method: 'SQL', ok: true, count: pastCases.length });
@@ -635,10 +641,12 @@ const apiNode = async (state) => {
 
       console.log(`   📡 [API 호출]: ${callInfo.m || 'GET'} ${targetUrl}`);
 
-      // 본인 목록 조회는 항상 현재 가게로 필터 (LLM이 빠뜨려도 코드가 보정)
+      // 본인 목록 조회는 항상 현재 가게로 필터 + limit 5로 응답 크기 제한 (컨텍스트 보호)
       let safeParams = callInfo.p || {};
-      if (state.storeId && /^customers\/[^/]+\/(orders|reservations|cases)\/?$/.test(callInfo.r)) {
-        safeParams = { ...safeParams, store_id: state.storeId };
+      const isCustomerList = /^customers\/[^/]+\/(orders|reservations|cases)\/?$/.test(callInfo.r);
+      if (isCustomerList) {
+        if (state.storeId) safeParams = { ...safeParams, store_id: state.storeId };
+        if (!safeParams.limit) safeParams.limit = 5;
       }
 
       const res = await axios({
@@ -666,6 +674,15 @@ const apiNode = async (state) => {
           ...rest,
           _note: "summary는 과거 상담 요약입니다. 무시하고 order_id 또는 reservation_id를 추출하세요."
         };
+      }
+
+      // customers/X/cases 응답은 너무 길어질 수 있으므로 압축 텍스트로 변환
+      if (/^customers\/[^/]+\/cases\/?$/.test(callInfo.r) && Array.isArray(res.data?.data)) {
+        const compact = res.data.data.slice(0, 5).map(c => {
+          const date = c.created_at ? new Date(c.created_at).toISOString().split('T')[0] : '-';
+          return `상담 ${c.case_id} | ${date} | ${c.status} | 카테고리: ${c.category || '-'} | 감정: ${c.emotion || '-'}`;
+        }).join('\n');
+        filteredData = `${compact || '(상담 없음)'} (총 ${res.data.total ?? res.data.data.length}건)`;
       }
 
       // 배송 관련 응답에서 구조화 메타데이터 추출 (프론트 전달용)
