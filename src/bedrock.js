@@ -1300,7 +1300,16 @@ const composerNode = async (state) => {
 
   // 혹시 LLM이 [답변] 라벨을 붙여 출력해도 깨끗이 추출
   const answerMatch = res.match(/\[답변\]\s*([\s\S]+)/);
-  const finalAnswer = (answerMatch ? answerMatch[1] : res).trim();
+  let finalAnswer = (answerMatch ? answerMatch[1] : res).trim();
+
+  // showReservationForm이 false인데 LLM이 "채팅창에서 바로 예약" 문구 넣는 경우 강제 제거
+  // (룰 8: 신규 예약 안내에서만 허용. 본인 예약 조회/확인 응답에 잘못 들어가는 환각)
+  if (!state.showReservationForm) {
+    finalAnswer = finalAnswer
+      .replace(/\s*채팅창에서\s*바로\s*예약하실\s*수\s*있습니다\.?/g, '')
+      .replace(/\s*\n\s*\n/g, '\n\n')  // 빈 줄 정리
+      .trim();
+  }
 
   return {
     finalAnswer,
