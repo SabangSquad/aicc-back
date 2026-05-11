@@ -344,6 +344,17 @@ const supervisorNode = async (state) => {
     }
   }
 
+  // 페이지네이션 후속 요청 → api 강제
+  // "다음 페이지", "N페이지", "더 보여줘" 등 + memory에 list 표시 흔적
+  if (state.customerId && intent !== 'api' && intent !== 'escalate') {
+    const isPagingQuery = q.match(/^\d+\s*페이지|다음\s*페이지|^더\s*(보여|줘|있)|^이후|^남은|\d+\s*번째\s*부터/);
+    const memHasList = state.historySummary && /총\s*\d+건|\d+\s*[~\-–]\s*\d+\s*번째|상담\s*\d+|주문\s*\d+|예약\s*\d+/.test(state.historySummary);
+    if (isPagingQuery && memHasList) {
+      console.log(`   └─ 🔄 페이지 후속 요청 → api 강제`);
+      intent = 'api';
+    }
+  }
+
   // rag로 분류됐지만 규정/정책 질문이 아니면 store로 전환
   // 단, 인사/단순 응답은 rag 유지 (Composer가 자연스럽게 답변)
   if (sc && intent === 'rag') {
@@ -522,30 +533,66 @@ const apiNode = async (state) => {
     }
   }
 
-  // 본인 과거 문의/상담 내역 조회 — closed cases (종료/AI자동해결) prefetch
-  if (caseRow && caseRow.customer_id != null && /^내\s*(문의|상담)|문의\s*내역|상담\s*내역|문의\s*기록|상담\s*기록|문의했|상담했/.test(state.userQuery)) {
+  // 본인 과거 문의/상담 내역 조회 — closed cases (종료/AI자동해결) prefetch (페이지네이션 지원)
+  const isCasesListQuery = caseRow && caseRow.customer_id != null && /^내\s*(문의|상담)|문의\s*내역|상담\s*내역|문의\s*기록|상담\s*기록|문의했|상담했/.test(state.userQuery);
+  // 페이지 요청 ("다음 페이지", "N페이지", "N번째부터", "더 보여줘") + memory에 상담 표시 흔적
+  const memHasCasesList = state.historySummary && /상담\s*\d+|상담 내역|문의 내역|총\s*\d+건/.test(state.historySummary);
+  const pagingMatch = state.userQuery.match(/(\d+)\s*페이지|(\d+)\s*번째\s*부터|다음\s*(페이지|상담|문의)|^더\s*(보여|줘|있)|이후\s*(상담|문의)|남은\s*(상담|문의)/);
+  const isCasesPagingQuery = memHasCasesList && pagingMatch && /상담|문의|페이지|더|이후|남은/.test(state.userQuery);
+
+  if (isCasesListQuery || isCasesPagingQuery) {
     try {
+      // OFFSET 계산
+      let offset = 0;
+      if (isCasesPagingQuery) {
+        if (pagingMatch[1]) {
+          offset = (parseInt(pagingMatch[1], 10) - 1) * 5;
+        } else if (pagingMatch[2]) {
+          offset = parseInt(pagingMatch[2], 10) - 1;
+        } else if (/다음|더|이후|남은/.test(state.userQuery)) {
+          // memory에서 직전 페이지 범위 추정 ("1~5번째" 또는 "1-5건" 등)
+          const m = state.historySummary.match(/(\d+)\s*[~\-–]\s*(\d+)\s*(번째|건)/);
+          offset = m ? parseInt(m[2], 10) : 5;
+        }
+      }
+
       const { rows: pastCases } = await pool.query(
         `SELECT case_id, category, status, summary, emotion, created_at, closed_at
          FROM cases
          WHERE customer_id = $1 AND store_id = $2
            AND case_id <> $3
            AND status IN ('종료', 'AI자동해결')
-         ORDER BY created_at DESC LIMIT 5`,
+         ORDER BY created_at DESC LIMIT 5 OFFSET $4`,
+        [caseRow.customer_id, caseRow.store_id, state.caseId, offset]
+      );
+      const { rows: totalRow } = await pool.query(
+        `SELECT COUNT(*)::int AS total FROM cases
+         WHERE customer_id = $1 AND store_id = $2 AND case_id <> $3 AND status IN ('종료', 'AI자동해결')`,
         [caseRow.customer_id, caseRow.store_id, state.caseId]
       );
-      // 압축 텍스트 포맷 (JSON 대신) — 토큰 절약
+      const total = totalRow[0]?.total || 0;
+      const start = offset + 1;
+      const end = offset + pastCases.length;
+
+      // 압축 텍스트 포맷
       const compactLines = pastCases.map(c => {
         const date = c.created_at ? new Date(c.created_at).toISOString().split('T')[0] : '-';
         const summary = c.summary ? c.summary.replace(/\n+/g, ' ').slice(0, 80) : '요약 없음';
         return `상담 ${c.case_id} | ${date} | ${c.status} | 카테고리: ${c.category || '-'} | 감정: ${c.emotion || '-'} | 요약: ${summary}`;
       }).join('\n');
-      const stepResult = `\n[${iterations + 1}회차 결과 - 과거 종료된 상담 ${pastCases.length}건]:\n${compactLines || '(과거 종료 상담 없음)'}`;
+
+      let pagingNote = '';
+      if (total > 5) {
+        const hasMore = end < total;
+        pagingNote = `\n(총 ${total}건 중 ${start}~${end}번째 표시${hasMore ? '. 더 보시려면 "다음 페이지" 또는 "N페이지"라고 말씀해 주세요.' : '. 마지막 페이지입니다.'})`;
+      }
+
+      const stepResult = `\n[${iterations + 1}회차 결과 - 과거 종료된 상담 ${pastCases.length}건]:\n${compactLines || '(과거 종료 상담 없음)'}${pagingNote}`;
       accumulatedContext += stepResult;
-      console.log(`   ⚡ [Skip LLM+HTTP] cases prefetch (closed) 완료 (${pastCases.length}건)`);
+      console.log(`   ⚡ [Skip LLM+HTTP] cases prefetch (closed, offset=${offset}) 완료 (${pastCases.length}건 / 총 ${total}건)`);
       pushSource('customer', caseRow.customer_id);
       pastCases.forEach(c => pushSource('case', c.case_id));
-      apiCallTrace.push({ route: `customers/${caseRow.customer_id}/cases (closed)`, method: 'SQL', ok: true, count: pastCases.length });
+      apiCallTrace.push({ route: `customers/${caseRow.customer_id}/cases (closed, offset=${offset})`, method: 'SQL', ok: true, count: pastCases.length });
       iterations++;
     } catch (e) {
       console.error(`   └─ ❌ cases pre-fetch 실패:`, e.message);
