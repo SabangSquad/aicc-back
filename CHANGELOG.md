@@ -350,6 +350,12 @@
       - 모든 시도 실패 시 업종 기본값 fallback (이커머스→주문확인, 병원/식당→예약)
     - 수정 3: analyzeCaseConversation에서 storeCategory와 함께 sanitize 후 DB 저장
     - 효과: cases.category가 항상 업종별 허용 목록의 단일 값만 저장
+41. **fix: 취소 정책 질문이 rag 강제 룰에서 누락**
+
+    - 증상: "내 문의 내역" 응답 후 "다음 페이지" 입력 → "어떤 주문이나 예약을..." (escalate 재질문)
+    - 원인: supervisor 후처리의 페이지 라우팅 룰에 `intent !== 'escalate'` 조건이 있어 LLM이 escalate로 잘못 분류한 경우 보정 못 함
+    - 수정: paging rule에서 escalate 제외 조건 제거 → LLM 분류 결과 무관하게 페이지 키워드 + memory 컨텍스트 있으면 무조건 api 강제
+    - 효과: 모든 페이지 후속 요청이 api 노드로 가서 cases SQL OFFSET fetch 정상 동작
 
 ### 대화 품질 개선 + 토큰 오버플로우 방지 + 솔루션 분석 안정화
 

@@ -344,13 +344,13 @@ const supervisorNode = async (state) => {
     }
   }
 
-  // 페이지네이션 후속 요청 → api 강제
+  // 페이지네이션 후속 요청 → api 강제 (intent 무관, escalate/rag/store 다 override)
   // "다음 페이지", "N페이지", "더 보여줘" 등 + memory에 list 표시 흔적
-  if (state.customerId && intent !== 'api' && intent !== 'escalate') {
+  if (state.customerId && intent !== 'api') {
     const isPagingQuery = q.match(/^\d+\s*페이지|다음\s*페이지|^더\s*(보여|줘|있)|^이후|^남은|\d+\s*번째\s*부터/);
     const memHasList = state.historySummary && /총\s*\d+건|\d+\s*[~\-–]\s*\d+\s*번째|상담\s*\d+|주문\s*\d+|예약\s*\d+/.test(state.historySummary);
     if (isPagingQuery && memHasList) {
-      console.log(`   └─ 🔄 페이지 후속 요청 → api 강제`);
+      console.log(`   └─ 🔄 페이지 후속 요청 → api 강제 (was: ${intent})`);
       intent = 'api';
     }
   }
