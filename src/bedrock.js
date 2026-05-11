@@ -1304,8 +1304,10 @@ const composerNode = async (state) => {
 
   console.log(`✍️ [Node 8/9: Composer] 답변 구성 중...`);
 
-  const today = new Date().toLocaleDateString('ko-KR', {
+  // 시간까지 포함된 현재 KST (매뉴얼의 "전일 오후 6시" 같은 cutoff와 비교 필요)
+  const today = new Date().toLocaleString('ko-KR', {
     year: 'numeric', month: 'long', day: 'numeric', weekday: 'long',
+    hour: '2-digit', minute: '2-digit', hour12: false,
     timeZone: 'Asia/Seoul'
   });
   const res = await invokePrompt("composer", {
