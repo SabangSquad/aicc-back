@@ -177,6 +177,15 @@ function trySupervisorShortcut(state) {
     return { intent: 'api' };
   }
 
+  // 4-1) "내 문의/상담 내역" — 본인 과거 상담 조회 (모든 업종)
+  if (/^내\s*(문의|상담)(\s|$|을|를|이|가|\s*내역|\s*기록)/.test(q) && state.customerId) {
+    return { intent: 'api' };
+  }
+  // 또는 "문의 내역 확인", "상담 내역 알려줘" 패턴
+  if (/^(문의|상담)\s*(내역|기록|이력)/.test(q) && state.customerId) {
+    return { intent: 'api' };
+  }
+
   // 5) "주문/배송 정보/상태/확인/조회/내역" — "내" 생략된 본인 데이터 조회. 로그인 시 api
   if (/^(주문|배송)\s*(정보|상태|확인|조회|내역)/.test(q) && !hasComplexity.test(q) && state.customerId && (sc === '이커머스' || !sc)) {
     return { intent: 'api' };
@@ -513,6 +522,30 @@ const apiNode = async (state) => {
     }
   }
 
+  // 본인 과거 문의/상담 내역 조회 — closed cases (종료/AI자동해결) prefetch
+  if (caseRow && caseRow.customer_id != null && /^내\s*(문의|상담)|문의\s*내역|상담\s*내역|문의\s*기록|상담\s*기록|문의했|상담했/.test(state.userQuery)) {
+    try {
+      const { rows: pastCases } = await pool.query(
+        `SELECT case_id, category, status, summary, emotion, created_at, closed_at
+         FROM cases
+         WHERE customer_id = $1 AND store_id = $2
+           AND case_id <> $3
+           AND status IN ('종료', 'AI자동해결')
+         ORDER BY created_at DESC LIMIT 5`,
+        [caseRow.customer_id, caseRow.store_id, state.caseId]
+      );
+      const stepResult = `\n[${iterations + 1}회차 결과 - customers/${caseRow.customer_id}/cases (과거 종료된 상담)]: ${JSON.stringify({ data: pastCases })}`;
+      accumulatedContext += stepResult;
+      console.log(`   ⚡ [Skip LLM+HTTP] customers/${caseRow.customer_id}/cases pre-fetch 완료 (${pastCases.length}건)`);
+      pushSource('customer', caseRow.customer_id);
+      pastCases.forEach(c => pushSource('case', c.case_id));
+      apiCallTrace.push({ route: `customers/${caseRow.customer_id}/cases (closed)`, method: 'SQL', ok: true, count: pastCases.length });
+      iterations++;
+    } catch (e) {
+      console.error(`   └─ ❌ cases pre-fetch 실패:`, e.message);
+    }
+  }
+
   // cases에 reservation_id 없는데 사용자가 예약 관련 질문 → 현재 가게의 본인 예약 SQL prefetch
   if (caseRow && caseRow.reservation_id == null && caseRow.customer_id != null && /예약/.test(state.userQuery)) {
     try {
@@ -667,6 +700,10 @@ const apiNode = async (state) => {
       iterations++;
     }
   }
+
+  // composer로 넘기기 전에 내부 hint(_note) 제거 — 사용자에게 노출되면 안 됨
+  // _note는 apiAgent 다음 행동 결정용이라 composer 단계에선 불필요
+  accumulatedContext = accumulatedContext.replace(/,\s*"_note"\s*:\s*"[^"]*"/g, '');
 
   // 정책성 질문(취소/환불/교환 + 가능/규정/어떻게 등)이면 매뉴얼도 함께 검색해서 sourceData에 추가
   // 이후 composer가 본인 데이터 + 매뉴얼 결합한 정확한 답변 생성

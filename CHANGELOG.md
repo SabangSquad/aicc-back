@@ -272,6 +272,21 @@
       - history 600 → 500 자
       - composer max_tokens 640 → 512
     - 효과: "상품정보" 류 질문은 store로 가벼운 가게 정보만 fetch + 출력 안전
+35. **fix: "내 문의 내역" 조회 시 현재 case만 보여주고 내부 hint(_note)까지 노출되던 문제**
+
+    - 증상: "내 문의 내역 확인해줘" → 현재 진행 중 case(1110) 한 건만 raw로 표시 + 내부 메모 "summary 무시..."까지 답변에 노출
+    - 원인 1: supervisor shortcut에 "내 문의/상담 내역" 패턴 없어 LLM에 떠맡김
+    - 원인 2: apiNode prefetch가 종료된 과거 상담 fetch 안 함
+    - 원인 3: cases prefetch가 LLM 힌트용 `_note`를 sourceData에 같이 넣어 composer가 사용자에게 노출
+    - 수정 1: supervisor shortcut에 "내 문의/상담", "문의 내역", "상담 내역" 패턴 추가 → api 즉시
+    - 수정 2: apiNode에 closed cases (종료/AI자동해결) SQL prefetch 추가
+      - customer_id + store_id + 현재 case 제외 + LIMIT 5
+      - 카테고리/감정/요약/접수일·종료일 노출
+    - 수정 3: apiNode return 직전에 sourceData에서 `_note` 필드 정규식으로 제거
+    - 수정 4: composer 프롬프트 룰 6 보강
+      - 상담(case) 라벨은 case_id로 식별 명시
+      - "_note", "_hint" 같이 _로 시작하는 내부 메모는 사용자 노출 금지 명시
+    - 효과: 과거 종료된 상담 5건이 상담번호·카테고리·감정·요약으로 정리되어 표시
 
 ### 대화 품질 개선 + 토큰 오버플로우 방지 + 솔루션 분석 안정화
 
