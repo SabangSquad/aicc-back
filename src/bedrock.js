@@ -1312,9 +1312,10 @@ const composerNode = async (state) => {
   });
   const res = await invokePrompt("composer", {
     user_input: state.userQuery,
-    // 컨텍스트 한계(3072 토큰) 고려: prompt(~400) + source(~800) + history(~330) + 입력(~80) = ~1600 + 출력 512 = 2112 < 3072
-    source_data: truncate(state.sourceData, 1200),
-    history: truncate(state.historySummary, 500, { keepEnd: true }),
+    // 컨텍스트 한계(3072 토큰) 고려: prompt(~550) + source(~670) + history(~330) + 입력(~80) = ~1630 + 출력 400 = 2030 < 3072
+    // composer 프롬프트가 step-by-step 추론 강화로 길어진 상태 + 매뉴얼 fetch 시 source 큼
+    source_data: truncate(state.sourceData, 1000),
+    history: truncate(state.historySummary, 400, { keepEnd: true }),
     today
   });
 

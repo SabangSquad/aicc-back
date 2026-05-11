@@ -487,6 +487,15 @@
     - 절대 규칙 추가: "미래 cutoff를 '이미 지났다'고 단정 금지", "여러 항목 절대 묶어 판단 금지"
     - 예시 3개로 가능/불가 케이스 비교 시연 (24시간/오늘/미래 cutoff)
     - 효과: 단순 산수만 시키면 LLM도 잘 판단 → 시간 환각 차단
+56. **fix: composer 프롬프트가 step-by-step 추론 강화로 다시 ContextOverflow + 매뉴얼 LIMIT 최적화**
+
+    - 증상: 매뉴얼 fetch + 추론 강화 프롬프트 + 2건 예약 prefetch → input 2665, +512 = 3177 overflow
+    - 수정 1: 매뉴얼 검색 LIMIT 조정
+      - `categoryHint` 있으면 LIMIT 1 (정확히 매칭됐으므로 1건이면 충분)
+      - `categoryHint` 없으면 기존대로 LIMIT 2 (모호성 보험)
+    - 수정 2: composer max_tokens 512 → 400
+    - 수정 3: source_data truncate 1200 → 1000자, history 500 → 400자
+    - 효과: 입력 ~1630 + 출력 400 = 2030 < 3072 (안전 마진 충분)
 
 ### 대화 품질 개선 + 토큰 오버플로우 방지 + 솔루션 분석 안정화
 

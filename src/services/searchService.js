@@ -12,6 +12,8 @@ export async function findSimilarContext(query, storeId, categoryHint = null) {
     await registerType(client);
     // categoryHint 있으면 해당 카테고리 매뉴얼 우선 (있으면 top, 그 다음 임베딩 거리)
     // 없으면 기존대로 임베딩 거리만으로 정렬
+    // categoryHint 있으면 정확한 카테고리 매뉴얼 1건만 (보통 충분)
+    // hint 없으면 임베딩 유사도만으로 2건 (모호성 보험)
     const sql = categoryHint
       ? `
         SELECT manual_id, title, category, content, embedding <=> $1 AS distance
@@ -20,7 +22,7 @@ export async function findSimilarContext(query, storeId, categoryHint = null) {
         ORDER BY
           CASE WHEN category = $3 THEN 0 ELSE 1 END,
           embedding <=> $1
-        LIMIT 3
+        LIMIT 1
       `
       : `
         SELECT manual_id, title, category, content, embedding <=> $1 AS distance

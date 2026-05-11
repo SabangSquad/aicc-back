@@ -15,7 +15,7 @@ const MAX_TOKENS_BY_PROMPT = {
   apiAgent: 128,
   memoryLoader: 192,
   ragAgent: 384,
-  composer: 512,  // 여러 항목 나열 가능하면서 컨텍스트 한계 안에 안전
+  composer: 400,  // step-by-step 추론 프롬프트 길어진 상태 + 매뉴얼 fetch 시 안전 마진
   caseWriter: 512,
   solutionAnalyzer: 512,
 };
