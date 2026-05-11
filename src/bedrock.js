@@ -1492,6 +1492,45 @@ export async function processAICC(userQuery, caseId, storeId, customerId, res) {
 }
 
 // 상담 분석
+// 업종별 허용 카테고리 목록 (Case Writer 출력 검증용)
+const ALLOWED_CASE_CATEGORIES = {
+  '병원': ['예약', '예약확인', '예약변경', '예약취소', '진료과목'],
+  '식당': ['예약', '예약확인', '예약변경', '예약취소', '메뉴', '가격'],
+  '이커머스': ['배송조회', '주문확인', '환불', '교환', '취소', '상품정보'],
+};
+// 업종별 기본 카테고리 (LLM이 null/오류 출력 시 fallback)
+const DEFAULT_CASE_CATEGORY = {
+  '병원': '예약',
+  '식당': '예약',
+  '이커머스': '주문확인',
+};
+
+function sanitizeCaseCategory(rawCategory, storeCategory) {
+  const allowed = ALLOWED_CASE_CATEGORIES[storeCategory] || [];
+  const fallback = DEFAULT_CASE_CATEGORY[storeCategory] || null;
+  if (allowed.length === 0) return null; // 업종 모르면 null 유지
+
+  // null/빈값 → fallback (업종 기본)
+  if (!rawCategory || rawCategory === 'null') return fallback;
+
+  // 정확 일치
+  if (allowed.includes(rawCategory)) return rawCategory;
+
+  // "취소|이커머스" 같이 합쳐진 경우 → 파이프로 split해서 허용 목록에 있는 첫 값 추출
+  if (rawCategory.includes('|')) {
+    const parts = rawCategory.split('|').map(s => s.trim());
+    const valid = parts.find(p => allowed.includes(p));
+    if (valid) return valid;
+  }
+
+  // 부분 일치 시도 (예: "주문 취소" → "취소")
+  const match = allowed.find(c => rawCategory.includes(c));
+  if (match) return match;
+
+  // 어떤 매칭도 안 되면 fallback
+  return fallback;
+}
+
 export async function analyzeCaseConversation(conversationText, storeCategory = null) {
   const res = await invokePrompt("caseWriter", {
     conversation_text: truncate(conversationText, 3500, { keepEnd: true }),
@@ -1499,6 +1538,13 @@ export async function analyzeCaseConversation(conversationText, storeCategory = 
   });
   try {
     const json = JSON.parse(res.match(/\{[\s\S]*\}/)?.[0] || 'null');
+    if (json && storeCategory) {
+      const before = json.category;
+      json.category = sanitizeCaseCategory(json.category, storeCategory);
+      if (before !== json.category) {
+        console.log(`   🧹 [caseWriter] category 정제: "${before}" → "${json.category}"`);
+      }
+    }
     return { rawText: res, json };
   } catch (e) { return { rawText: res, json: null }; }
 }
