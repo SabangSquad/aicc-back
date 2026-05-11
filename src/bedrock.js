@@ -29,9 +29,9 @@ const internalApiBaseUrl = (
 
 
 // pgvector 조회 — 해당 가게 매뉴얼에서 유사도 검색
-async function retrieveKB(query, storeId) {
-  console.log(`   🔎 [pgvector] store_id=${storeId} 매뉴얼 검색 중...`);
-  return await findSimilarContext(query, storeId);
+async function retrieveKB(query, storeId, categoryHint = null) {
+  console.log(`   🔎 [pgvector] store_id=${storeId} 매뉴얼 검색 중${categoryHint ? ` (카테고리 hint=${categoryHint})` : ''}...`);
+  return await findSimilarContext(query, storeId, categoryHint);
 }
 
 // 그래프 상태 정의
@@ -858,8 +858,23 @@ const apiNode = async (state) => {
   const q = state.userQuery;
   if (q.match(/환불|교환|반품|취소|변경/) && q.match(/규정|정책|어떻게|며칠|기간|보통|가능|되나요|되요|되는지|할\s*수\s*있/)) {
     try {
-      console.log(`   📚 [api+rag] 정책 질문 감지 → 매뉴얼 추가 검색`);
-      const { context: manualDocs, sources: manualSources } = await retrieveKB(q, state.storeId);
+      // 카테고리 hint 추출 — 정책 키워드 + 업종 매핑
+      // 병원/식당: "예약 + 변경/취소/확인" → 예약변경/예약취소/예약확인
+      // 이커머스: 변경 → 취소, 환불/교환은 그대로
+      let categoryHint = null;
+      const sc = state.storeCategory;
+      if (sc === '병원' || sc === '식당') {
+        if (q.match(/예약\s*변경|변경\s*가능|변경\s*할\s*수/)) categoryHint = '예약변경';
+        else if (q.match(/예약\s*취소|취소\s*가능|취소\s*할\s*수/)) categoryHint = '예약취소';
+        else if (q.match(/예약\s*확인|확인\s*가능|확인\s*할\s*수/)) categoryHint = '예약확인';
+      } else if (sc === '이커머스') {
+        if (q.match(/환불/)) categoryHint = '환불';
+        else if (q.match(/교환/)) categoryHint = '교환';
+        else if (q.match(/취소|변경/)) categoryHint = '취소'; // 이커머스는 변경 = 취소 + 재주문
+        else if (q.match(/반품/)) categoryHint = '환불'; // 반품은 보통 환불 매뉴얼
+      }
+      console.log(`   📚 [api+rag] 정책 질문 감지 → 매뉴얼 추가 검색${categoryHint ? ` (카테고리 hint: ${categoryHint})` : ''}`);
+      const { context: manualDocs, sources: manualSources } = await retrieveKB(q, state.storeId, categoryHint);
       if (manualSources?.length) {
         console.log(`      └─ 매칭된 매뉴얼:`);
         manualSources.forEach(s => {
