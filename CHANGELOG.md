@@ -658,6 +658,15 @@
     - 수정 1: conversation_text truncate 3500 → 2500자 (≈1700 토큰)
     - 수정 2: caseWriter max_tokens 512 → 384 (분석 JSON 출력에 충분)
     - 효과: 입력 ~2255 + 출력 384 = 2639 < 3072 (안전 마진)
+73. **fix: solutionAnalyzer truncate 없어 ContextOverflow 잠재 위험 — 사전 차단**
+
+    - 증상 (잠재): 상담 30건 × 요약 ~150자 = ~4500자 summary_data → 토큰 3000+ → overflow
+    - 원인: analyzeSolutions에서 stats/summary_data truncate 없음
+    - 수정 1: analyzeSolutions에 truncate 추가
+      - stats: 600자 (요약 통계라 짧음)
+      - summary_data: 2000자, keepEnd=true (최근 케이스 우선 유지)
+    - 수정 2: solutionAnalyzer max_tokens 512 → 400
+    - 효과: 입력 ~2400 + 출력 400 = 2800 < 3072 (안전 마진)
 
 ### 대화 품질 개선 + 토큰 오버플로우 방지 + 솔루션 분석 안정화
 

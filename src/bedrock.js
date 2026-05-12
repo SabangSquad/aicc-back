@@ -1787,7 +1787,12 @@ export async function analyzeCaseConversation(conversationText, storeCategory = 
 
 // 상담 솔루션 분석 — 숫자는 코드가 계산, AI는 해석+솔루션만
 export async function analyzeSolutions(statsText, summaryText) {
-  const params = { stats: statsText, summary_data: summaryText };
+  // 컨텍스트 한계 보호: 통계는 짧으니 그대로, 요약 데이터만 truncate
+  // prompt(~330) + stats(~150) + summary(~1500) + 출력 400 = ~2380 < 3072 (안전)
+  const params = {
+    stats: truncate(statsText, 600, { keepEnd: false }),
+    summary_data: truncate(summaryText, 2000, { keepEnd: true }),  // 최근 케이스 우선
+  };
 
   for (let attempt = 0; attempt < 2; attempt++) {
     const res = await invokePrompt("solutionAnalyzer", params);
