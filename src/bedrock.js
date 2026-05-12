@@ -1769,7 +1769,7 @@ function sanitizeCaseCategory(rawCategory, storeCategory) {
 
 export async function analyzeCaseConversation(conversationText, storeCategory = null) {
   const res = await invokePrompt("caseWriter", {
-    conversation_text: truncate(conversationText, 3500, { keepEnd: true }),
+    conversation_text: truncate(conversationText, 2500, { keepEnd: true }),
     store_category: storeCategory || "없음"
   });
   try {

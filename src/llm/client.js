@@ -16,7 +16,7 @@ const MAX_TOKENS_BY_PROMPT = {
   memoryLoader: 192,
   ragAgent: 384,
   composer: 400,  // 프롬프트 다이어트 후 (2500→1100 토큰), 답변 짤림 방지 위해 복원
-  caseWriter: 512,
+  caseWriter: 384,  // 대화 분석 JSON 출력에 충분 + ContextOverflow 마진
   solutionAnalyzer: 512,
 };
 

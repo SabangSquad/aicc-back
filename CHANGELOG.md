@@ -651,6 +651,13 @@
     - 수정 2: 지시어 + 본인 데이터 api 강제 룰의 isInquiryAboutOwn에서 "얼마" 제거
       - "얼마" 단독은 가격 질문(메뉴 후속) 가능성 높음 → store 카탈로그 룰이 처리
     - 효과: "그거 얼마야?" → store 강제 → 메뉴 가격 답변
+72. **fix: caseWriter (상담 종료 분석)에서 ContextOverflow**
+
+    - 증상: 상담 종료 시 caseWriter 호출에 input 2617 + 512 = 3129 overflow
+    - 원인: conversation_text truncate 3500자(≈2300 토큰)에 prompt 550 + others ≈ 2900 → 한계 초과
+    - 수정 1: conversation_text truncate 3500 → 2500자 (≈1700 토큰)
+    - 수정 2: caseWriter max_tokens 512 → 384 (분석 JSON 출력에 충분)
+    - 효과: 입력 ~2255 + 출력 384 = 2639 < 3072 (안전 마진)
 
 ### 대화 품질 개선 + 토큰 오버플로우 방지 + 솔루션 분석 안정화
 
