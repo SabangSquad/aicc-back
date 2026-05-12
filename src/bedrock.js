@@ -382,9 +382,10 @@ const supervisorNode = async (state) => {
     }
   }
 
-  // "상담 N" / "주문 N" / "예약 N" 명시적 ID + 본인 데이터 의도 → api 강제 (intent 무관)
+  // "상담 N" / "주문 N" / "예약 N" 명시적 ID + 본인 데이터 의도 → api 강제 (단, escalate는 보존)
+  // escalate는 처리 요청(변경/취소)이므로 명시 ID 있어도 escalate가 우선
   // 예: "상담 1106 답변 언제 와?", "주문 503 상태?", "예약 27 확인"
-  if (state.customerId && intent !== 'api') {
+  if (state.customerId && intent !== 'api' && intent !== 'escalate') {
     const hasExplicitEntityId = q.match(/(상담|주문|예약)\s*(번?호?)?\s*\d{2,}/);
     if (hasExplicitEntityId) {
       console.log(`   └─ 🔄 명시적 ID(${hasExplicitEntityId[0]}) → api 강제 (was: ${intent})`);
@@ -395,7 +396,8 @@ const supervisorNode = async (state) => {
   // "예약된 거 있는지/예약 확인/예약 잡혀있/예약 됐는지/예약한 거 언제" 본인 예약 조회 → api 강제
   // 신규 예약 의사("예약하고 싶어", "잡아줘")가 아니라 기존 예약 확인 패턴
   // 비로그인이어도 api로 보내서 "로그인 필요" 안내로 끝나게 (store action → 폼 띄우는 것 방지)
-  if (intent !== 'api') {
+  // escalate(취소/변경 처리 요청)는 보존
+  if (intent !== 'api' && intent !== 'escalate') {
     const isExistingReservationCheck = q.match(
       /예약(된|한)\s*(거|것|게|건)|예약\s*(확인|조회|내역)|예약\s*되어\s*있|예약\s*잡혀\s*있|예약\s*있(나|어|는지)|예약\s*(했|됐)는지|예약\s*(언제|시간|날짜)/
     );
@@ -406,9 +408,9 @@ const supervisorNode = async (state) => {
     }
   }
 
-  // 페이지네이션 후속 요청 → api 강제 (intent 무관, escalate/rag/store 다 override)
+  // 페이지네이션 후속 요청 → api 강제 (escalate는 보존)
   // "다음 페이지", "N페이지", "더 보여줘" 등 + memory에 list 표시 흔적
-  if (state.customerId && intent !== 'api') {
+  if (state.customerId && intent !== 'api' && intent !== 'escalate') {
     const isPagingQuery = q.match(/^\d+\s*페이지|다음\s*페이지|^더\s*(보여|줘|있)|^이후|^남은|\d+\s*번째\s*부터/);
     const memHasList = state.historySummary && /총\s*\d+건|\d+\s*[~\-–]\s*\d+\s*번째|상담\s*\d+|주문\s*\d+|예약\s*\d+/.test(state.historySummary);
     if (isPagingQuery && memHasList) {
