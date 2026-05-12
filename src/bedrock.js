@@ -924,9 +924,23 @@ const apiNode = async (state) => {
         console.log(`      └─ ⚠️ 매뉴얼 0건 매칭`);
       }
       if (manualDocs) {
-        accumulatedContext += `\n\n[참고 매뉴얼]: ${manualDocs}`;
+        // categoryHint와 실제 매칭된 매뉴얼 카테고리 비교 — 정확 매칭 없으면 미등록 안내 추가
+        // (SQL이 카테고리 우선 정렬이지만 매칭 없으면 다른 카테고리 매뉴얼이 들어옴 → 정책 답변 부정확)
+        const hasExactCategoryMatch = categoryHint
+          ? manualSources?.some(s => s.category === categoryHint)
+          : true;
+        if (categoryHint && !hasExactCategoryMatch) {
+          accumulatedContext += `\n\n[참고 매뉴얼 안내]: 이 매장에 [${categoryHint}] 정책 매뉴얼이 등록되어 있지 않습니다. 사장님께 직접 문의가 필요한 사안임을 사용자에게 친절히 안내하세요.`;
+          console.log(`      └─ ⚠️ categoryHint='${categoryHint}' 정확 매칭 없음 → 매장 문의 안내 추가`);
+        } else {
+          accumulatedContext += `\n\n[참고 매뉴얼]: ${manualDocs}`;
+        }
         if (manualSources?.length) dataSources.push(...manualSources);
         apiCallTrace.push({ route: 'pgvector/manuals', method: 'EMBEDDING', ok: true, count: manualSources?.length || 0 });
+      } else if (categoryHint) {
+        // 매뉴얼 0건 — 매장에 매뉴얼 자체가 등록 안 됨
+        accumulatedContext += `\n\n[참고 매뉴얼 안내]: 이 매장에 [${categoryHint}] 정책 매뉴얼이 등록되어 있지 않습니다. 사장님께 직접 문의가 필요한 사안임을 사용자에게 친절히 안내하세요.`;
+        console.log(`      └─ ⚠️ 매뉴얼 0건 + categoryHint='${categoryHint}' → 매장 문의 안내 추가`);
       }
     } catch (e) {
       console.error('[api] 매뉴얼 추가 검색 실패:', e.message);
@@ -1450,6 +1464,14 @@ const composerNode = async (state) => {
     .replace(/[\s.,]*다만,?\s*개인정보\s*보호\s*[^.]*?제공[^.]*?없습니다\.?/g, '')
     .replace(/[\s.,]*개인정보\s*보호\s*정책[^.]*?(없습니다|불가합니다|어렵습니다)\.?/g, '')
     .replace(/\s*\n\s*\n/g, '\n\n')
+    .trim();
+
+  // "고객센터로 문의" 류 회피 멘트 → "매장 사장님께 문의"로 강제 치환
+  // (이 챗봇 자체가 매장 상담창이라 "고객센터"는 모순. 매뉴얼 미등록 시 사장에게 직접 문의가 맞음)
+  finalAnswer = finalAnswer
+    .replace(/정확한\s*확인을?\s*위해\s*고객\s*센터로?\s*문의/g, '정확한 확인을 위해 매장 사장님께 문의')
+    .replace(/고객\s*센터로?\s*문의해\s*주세요/g, '매장 사장님께 문의해 주세요')
+    .replace(/고객\s*센터에?\s*문의/g, '매장 사장님께 문의')
     .trim();
 
   return {
