@@ -449,8 +449,13 @@ const supervisorNode = async (state) => {
   }
 
   // reservation_type 확정 — 모든 intent 전환 끝난 후 마지막에 판정
+  // "예약" 명시적 키워드 있을 때만 예약 질문으로 간주.
+  // "언제/가능/빈/비어/자리"는 "예약"과 함께 또는 예약 맥락에서만 의미.
+  // 단독 "언제까지" 같은 건 영업시간 질문일 수 있음 → reservation_type null
   if (intent === 'store') {
-    const isReservationQuery = !!q.match(/예약|언제|가능|빈|비어|자리/);
+    const hasExplicitReservation = !!q.match(/예약/);
+    const hasReservationContextOnly = !!q.match(/빈\s*(자리|시간)|비어\s*있/);  // 예약 없이도 예약 의미 분명한 표현
+    const isReservationQuery = hasExplicitReservation || hasReservationContextOnly;
     if (isReservationQuery) {
       if (!reservationType) {
         const actionVerbs = /할래|할게|하자|하고\s*싶|해줘|해주세요|잡아|잡고\s*싶/;
