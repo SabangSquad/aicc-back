@@ -342,8 +342,10 @@ const supervisorNode = async (state) => {
   // "내 주문 상품" 같은 본인 데이터 묻는 건 제외
   if (intent !== 'store' && !q.match(/내\s|그거|이거|주문\s*\d|주문번호/)) {
     const isStoreInfo = q.match(/^(상품\s*정보|상품\s*설명|상품\s*소개|메뉴|진료과목|진료\s*과|가격|영업시간|운영시간|주차|위치|주소|공지)/);
-    if (isStoreInfo) {
-      console.log(`   └─ 🔄 가게 정보 카탈로그 질문 → store 강제 (was: ${intent})`);
+    // "X 얼마?" / "X 가격?" 류 — 상품/메뉴명 + 가격 질문도 store
+    const isItemPriceQuery = q.match(/얼마(예요|야|입니까|인가요)?\??$|얼마\s*예요|가격\s*(이|은)?\s*얼마|가격\s*(알려|알려줘)/);
+    if (isStoreInfo || isItemPriceQuery) {
+      console.log(`   └─ 🔄 가게 정보/가격 카탈로그 질문 → store 강제 (was: ${intent})`);
       intent = 'store';
     }
   }
