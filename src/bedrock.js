@@ -923,13 +923,24 @@ const apiNode = async (state) => {
 };
 
 // 노드 5: RAG Agent
+// 일반 정책 질문 감지 (지시어/명시ID 없는 순수 정책 문의)
+function isGeneralPolicyQuery(q) {
+  const hasPolicyKeyword = /규정|정책|어떻게|며칠|기간|보통|일반적/.test(q);
+  const hasReferenceOrId = /내\s|그거|이거|저거|그\s*(주문|예약|상품)|방금|\d{2,}/.test(q);
+  return hasPolicyKeyword && !hasReferenceOrId;
+}
+
 const ragNode = async (state) => {
   console.log(`📚 [Node 5: RAG Agent] 지식 검색 중...`);
   const { context: docs, sources } = await retrieveKB(state.userQuery, state.storeId);
+  // 일반 정책 질문이면 history 비움 (본인 데이터 섞임 방지)
+  const generalPolicy = isGeneralPolicyQuery(state.userQuery);
+  const historyForRag = generalPolicy ? '이전 맥락 없음' : (state.historySummary || '이전 맥락 없음');
+  if (generalPolicy) console.log(`   └─ 🧼 일반 정책 질문 → history 비움 (본인 데이터 섞임 방지)`);
   const res = await invokePrompt("ragAgent", {
     user_query: state.userQuery,
     retrieved_context: truncate(docs, 1800),
-    history: truncate(state.historySummary || "이전 맥락 없음", 1000, { keepEnd: true })
+    history: truncate(historyForRag, 1000, { keepEnd: true })
   });
   console.log(`   └─ 📎 매뉴얼 ${sources.length}건 매칭 (top score: ${sources[0]?.score ?? 'N/A'})`);
   return {
@@ -1344,12 +1355,17 @@ const composerNode = async (state) => {
     hour: '2-digit', minute: '2-digit', hour12: false,
     timeZone: 'Asia/Seoul'
   });
+  // 일반 정책 질문이면 history 비움 (본인 데이터 섞임 방지)
+  const generalPolicy = isGeneralPolicyQuery(state.userQuery);
+  const historyForComposer = generalPolicy ? '이전 맥락 없음' : (state.historySummary || '이전 맥락 없음');
+  if (generalPolicy) console.log(`   └─ 🧼 일반 정책 질문 → composer history 비움`);
+
   const res = await invokePrompt("composer", {
     user_input: state.userQuery,
     // 컨텍스트 한계(3072 토큰) 고려: prompt(~550) + source(~670) + history(~330) + 입력(~80) = ~1630 + 출력 400 = 2030 < 3072
     // composer 프롬프트가 step-by-step 추론 강화로 길어진 상태 + 매뉴얼 fetch 시 source 큼
     source_data: truncate(state.sourceData, 1000),
-    history: truncate(state.historySummary, 400, { keepEnd: true }),
+    history: truncate(historyForComposer, 400, { keepEnd: true }),
     today
   });
 

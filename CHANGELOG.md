@@ -519,6 +519,15 @@
     - 수정 3: escalateNode 시작에 `state.finalAnswer === "__LOGIN_REQUIRED__"` early return
       - supervisor 비로그인 escalate 결정 보존 (덮어쓰지 않음)
     - 효과: "예약 바꿀 수 있게 해줘" → escalate → 비로그인은 로그인 유도 / 로그인은 상담사 연결 (폼 안 띄움)
+59. **fix: 일반 정책 질문에 LLM이 memory 본인 데이터 끌어와 섞던 문제 — history 코드 강제 차단**
+
+    - 증상: "예약 취소 규정 어떻게 되나요?" → ragAgent/composer가 memory에서 본인 예약 517 정보 끌어와 "예약 517 (5/15)는 마감 전이라 취소 가능" 답변 (일반 규정 묻는 건데 본인 예약 데이터 섞임)
+    - 원인: ragAgent/composer 프롬프트에 "지시어 없으면 본인 데이터 인용 금지" 룰 있지만 LLM 안 따름
+    - 수정: bedrock.js에 `isGeneralPolicyQuery(q)` 헬퍼 추가
+      - 정책 키워드(`규정|정책|어떻게|며칠|기간|보통|일반적`) + 지시어/명시ID/내 없음 → true
+    - ragNode + composerNode 모두 일반 정책 질문이면 history를 "이전 맥락 없음"으로 대체
+      → LLM이 본인 데이터 못 봄 → 매뉴얼 인용만 함
+    - 효과: 일반 정책 질문엔 깔끔한 매뉴얼 인용 (본인 데이터 섞임 방지)
 
 ### 대화 품질 개선 + 토큰 오버플로우 방지 + 솔루션 분석 안정화
 
