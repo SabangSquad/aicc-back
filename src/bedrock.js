@@ -286,8 +286,21 @@ const supervisorNode = async (state) => {
     }
   }
 
+  // "예약 변경/취소" 처리 요청 → 무조건 escalate (병원/식당에서 상담사가 처리)
+  // LLM이 store action으로 잘못 분류하는 경우 보정 (예: "예약 6시로 변경해줘", "예약 바꿀 수 있게 해줘")
+  if ((sc === '병원' || sc === '식당') && intent !== 'escalate') {
+    // 변경/취소 어근 모두 포함: 변경|취소|바꿔|바꾸|바꿀|바꿈|미루|미루|미루다|미룸|연기
+    const isReservationChangeOrCancel = q.match(/예약.*?(변경|취소|바꿔|바꾸|바꿀|바꿈|미루|미룸|연기|미뤄)|(변경|취소|바꿔|바꾸|바꿀|바꿈|미루|미룸|연기|미뤄).*?예약/);
+    const hasActionRequest = q.match(/해줘|해주|주세요|줘\s*$|줘\?|줘\.|줘\s|진행|부탁|할게|할래|하자|싶|있게|있어/);
+    if (isReservationChangeOrCancel && hasActionRequest) {
+      console.log(`   └─ 🔄 예약 변경/취소 처리 요청 → escalate 강제 (was: ${intent})`);
+      intent = 'escalate';
+    }
+  }
+
   // "예약" 키워드 처리 — 규정/절차 질문이면 rag, 본인 데이터면 api, 나머지는 store
-  if (q.match(/예약/) && intent !== 'rag') {
+  // escalate(예약 변경/취소 처리 요청)는 supervisor LLM이 이미 분류한 것 → 덮어쓰지 말 것
+  if (q.match(/예약/) && intent !== 'rag' && intent !== 'escalate') {
     const isPolicyQuestion = q.match(/규정|절차|방법|어떻게|며칠|기간/);
     if (isPolicyQuestion) {
       intent = 'rag';
@@ -930,6 +943,12 @@ const ragNode = async (state) => {
 // 노드 5-2: Escalate (상담사 호출 + AI 요약/추천 답변 생성)
 const escalateNode = async (state) => {
   console.log(`🚨 [Node 5-2: Escalate] 상담사 호출 처리 중...`);
+
+  // supervisor에서 이미 비로그인 login_required 결정한 경우 → 그대로 통과 (덮어쓰지 말 것)
+  if (state.finalAnswer === "__LOGIN_REQUIRED__") {
+    console.log(`   └─ ⏩ 비로그인 로그인 유도 (supervisor 결정 보존)`);
+    return {};
+  }
 
   // 모호성 검사 — 어떤 주문/예약을 처리해야 할지 명확하지 않으면 재질문
   // memoryHasTarget이 있으면 같은 case 내 후속 대화로 간주, 지시어 없어도 escalate 허용

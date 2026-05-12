@@ -506,6 +506,19 @@
     - 수정 3: composerNode에서 complaint intent면 LLM 호출 없이 즉시 템플릿 응답
       - "불편을 드려 죄송합니다. 어떤 부분이 어려우신지 구체적으로 말씀해 주시면 도와드릴게요."
     - 효과: 단순 불만은 ~0초 (LLM 호출 0), 사용자에게 빠른 사과 + 명확한 재질문
+58. **fix: 예약 변경/취소 처리 요청이 store action(폼)으로 잘못 분류되던 문제 (escalate 강제)**
+
+    - 증상: "예약 바꿀 수 있게 해줘" → store action 분류 → 비로그인 + 신규 예약 폼 + 가능 시간 안내 (잘못)
+    - 원인 1: "예약" 키워드 후처리가 `intent !== 'rag'` 조건만 체크해서 LLM이 분류한 escalate를 store로 덮어씀
+    - 원인 2: escalate 강제 룰 정규식이 `바꿔|바꾸`만 잡고 `바꿀|바꿈|미루|연기` 등 누락
+    - 원인 3: escalateNode가 supervisor의 `__LOGIN_REQUIRED__` 결정을 덮어쓰는 경우 발생
+    - 수정 1: 예약 키워드 후처리 조건에 `intent !== 'escalate'` 추가 → LLM의 escalate 분류 보존
+    - 수정 2: 예약 변경/취소 escalate 강제 룰 정규식 확장
+      - 어근: 변경/취소/바꿔/바꾸/바꿀/바꿈/미루/미룸/연기/미뤄
+      - action 표현: 해줘/해주/주세요/줘/진행/부탁/할게/할래/하자/싶/있게/있어
+    - 수정 3: escalateNode 시작에 `state.finalAnswer === "__LOGIN_REQUIRED__"` early return
+      - supervisor 비로그인 escalate 결정 보존 (덮어쓰지 않음)
+    - 효과: "예약 바꿀 수 있게 해줘" → escalate → 비로그인은 로그인 유도 / 로그인은 상담사 연결 (폼 안 띄움)
 
 ### 대화 품질 개선 + 토큰 오버플로우 방지 + 솔루션 분석 안정화
 
