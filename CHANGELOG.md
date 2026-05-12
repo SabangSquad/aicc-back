@@ -667,6 +667,16 @@
       - summary_data: 2000자, keepEnd=true (최근 케이스 우선 유지)
     - 수정 2: solutionAnalyzer max_tokens 512 → 400
     - 효과: 입력 ~2400 + 출력 400 = 2800 < 3072 (안전 마진)
+74. **fix: ai_analysis가 null이거나 {raw}일 때 프론트 .headline crash**
+
+    - 증상: 프론트에서 `TypeError: Cannot read properties of null (reading 'headline')`
+    - 원인 1: analyzeSolutions가 LLM 파싱 실패 시 `{ raw: res }` 반환 → headline 없음
+    - 원인 2: stores.js cases 0건일 때 `ai_analysis: null` 반환 → 프론트가 null 접근
+    - 수정 1: analyzeSolutions 실패 시 valid 구조로 fallback
+      - `{ headline: "분석 결과를 불러오지 못했습니다.", issues: [], strategies: [] }`
+    - 수정 2: stores.js cases 0건 응답도 같은 형식
+      - `{ headline: "최근 상담 데이터가 없어 분석할 내용이 없습니다.", issues: [], strategies: [] }`
+    - 효과: ai_analysis는 항상 headline/issues/strategies 가진 valid 구조
 
 ### 대화 품질 개선 + 토큰 오버플로우 방지 + 솔루션 분석 안정화
 

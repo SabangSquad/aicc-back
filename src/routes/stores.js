@@ -856,12 +856,17 @@ router.get('/:store_id/solutions', isStoreOwner, async (req, res) => {
     );
 
     if (cases.length === 0) {
+      // 프론트가 .headline 접근하다 crash하지 않도록 valid 구조로
       return res.json({
         store_id: storeId,
         hours,
         total_cases: 0,
         stats: { by_category: [], by_emotion: [] },
-        ai_analysis: null,
+        ai_analysis: {
+          headline: '최근 상담 데이터가 없어 분석할 내용이 없습니다.',
+          issues: [],
+          strategies: [],
+        },
         _links: [{ rel: 'self', href: `/stores/${storeId}/solutions?hours=${hours}`, method: 'GET' }]
       });
     }

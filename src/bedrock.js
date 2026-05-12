@@ -1808,9 +1808,20 @@ export async function analyzeSolutions(statsText, summaryText) {
     } catch (e) {
       console.error(`[Solutions] JSON 파싱 실패 (시도 ${attempt + 1}/2):`, e.message);
       if (attempt === 0) continue; // 1회 재시도
-      return { raw: res };
+      // 최종 실패 시 프론트가 .headline 접근하다 crash하지 않도록 valid 구조 fallback
+      return {
+        headline: '분석 결과를 불러오지 못했습니다.',
+        issues: [],
+        strategies: [],
+      };
     }
   }
+  // 루프 종료 (이론상 unreachable) — 안전 fallback
+  return {
+    headline: '분석 결과를 불러오지 못했습니다.',
+    issues: [],
+    strategies: [],
+  };
 }
 
 // 체크포인터 초기화
