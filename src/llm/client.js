@@ -15,7 +15,7 @@ const MAX_TOKENS_BY_PROMPT = {
   apiAgent: 128,
   memoryLoader: 192,
   ragAgent: 384,
-  composer: 400,  // step-by-step 추론 프롬프트 길어진 상태 + 매뉴얼 fetch 시 안전 마진
+  composer: 320,  // 추론/룰 강화로 프롬프트 길어진 상태, ContextOverflow 마진 확보
   caseWriter: 512,
   solutionAnalyzer: 512,
 };

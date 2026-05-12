@@ -602,11 +602,28 @@
 
     - 증상: 사용자는 메뉴만 묻는데 composer가 sourceData 전체(주소/영업시간/편의시설/메뉴/공지)를 다 dump
     - 원인: composer 프롬프트가 sourceData에 있는 모든 카테고리를 다 활용하라고 해서 LLM이 전체 인용
-    - 수정: composer 프롬프트 룰 5-1 추가 — "질문 범위 한정"
-      - "안 물은 카테고리 정보 노출 금지" 명시
-      - 예시: "메뉴 뭐?" → 메뉴만 / "영업시간?" → 영업시간만 / "주차?" → 주차만
-      - [수집 정보]에 여러 카테고리 있어도 질문에 답하는 부분만 선택해서 답변
+    - 수정: composer 프롬프트 룰 5-1 추가 — 질문 범위 한정
+      - 안 물은 카테고리 정보 노출 금지 명시
+      - 예시: 메뉴 → 메뉴만 / 영업시간 → 영업시간만 / 주차 → 주차만
+      - sourceData에 여러 카테고리 있어도 질문에 답하는 부분만 선택해서 답변
     - 효과: 사용자가 물은 부분만 답변, 불필요한 정보 안 끼움
+68. **fix: storeNode가 모든 가게 정보 dump → ContextOverflow + 질문 범위 한정 데이터 단계 강제**
+
+    - 증상: 메뉴 묻는 질문에 input 2959 토큰 → +400 = 3359 overflow
+    - 원인: formatStoreInfo가 가게의 모든 정보(주소/전화/영업시간/편의시설/공지/메뉴/진료과목)를 무조건 sourceData에 dump
+    - 수정 1: detectStoreInfoScope 헬퍼 추가 — 질문 키워드 → 카테고리 매핑
+      - 메뉴/뭐 파/먹/판매 → menu
+      - 영업/운영/몇 시/언제/쉬는 날 → hours
+      - 주소/위치/어디 → address
+      - 주차/편의/와이파이/화장실 → facilities
+      - 진료/과목 → department
+      - 전화/연락처/번호 → phone
+      - 공지/이벤트 → notice
+      - 가격/얼마/비싸 → price (메뉴 가격)
+      - 매치 없음 → 전체 dump (fallback)
+    - 수정 2: formatStoreInfo가 scope에 해당하는 항목만 sourceData에 포함
+    - 수정 3: composer max_tokens 400 → 320 (안전 마진 추가)
+    - 효과: 좁은 질문엔 sourceData 작게 → input 토큰 절약 + 답변 범위 자연스럽게 좁아짐
 
 ### 대화 품질 개선 + 토큰 오버플로우 방지 + 솔루션 분석 안정화
 

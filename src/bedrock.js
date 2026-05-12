@@ -1141,33 +1141,51 @@ function groupBusinessHours(bh) {
   }).join(', ');
 }
 
-function formatStoreInfo(data) {
-  const lines = [];
-  lines.push(`가게명: ${data.name}`);
-  lines.push(`업종: ${data.category}`);
-  lines.push(`주소: ${data.address}`);
-  lines.push(`전화: ${data.phone}`);
+// 질문 키워드에서 어떤 카테고리 정보 필요한지 판단
+function detectStoreInfoScope(query = '') {
+  const scopes = new Set();
+  if (/메뉴|뭐\s*파|뭐\s*있|뭐\s*먹|뭐\s*있어|음식|먹을|판매|추천\s*메뉴/.test(query)) scopes.add('menu');
+  if (/영업|운영|몇\s*시|언제|쉬는\s*날|휴무|영업시간|운영시간/.test(query)) scopes.add('hours');
+  if (/주소|위치|어디|찾기|찾아|찾을/.test(query)) scopes.add('address');
+  if (/주차|편의|와이파이|wifi|화장실/.test(query)) scopes.add('facilities');
+  if (/진료(과목|과)?|과목|어떤\s*진료|진료\s*받/.test(query)) scopes.add('department');
+  if (/전화|연락처|번호/.test(query)) scopes.add('phone');
+  if (/공지|이벤트|혜택/.test(query)) scopes.add('notice');
+  if (/가격|얼마|비싸|싸|값/.test(query)) scopes.add('price'); // 메뉴 가격
+  return scopes;
+}
 
-  if (data.business_hours) {
+function formatStoreInfo(data, query = '') {
+  const scopes = detectStoreInfoScope(query);
+  const fullDump = scopes.size === 0; // 키워드 매치 없으면 전체 (fallback)
+  const lines = [];
+
+  // 가게명/업종은 항상 포함 (간략)
+  lines.push(`가게명: ${data.name} (${data.category})`);
+
+  if (fullDump || scopes.has('address')) lines.push(`주소: ${data.address}`);
+  if (fullDump || scopes.has('phone')) lines.push(`전화: ${data.phone}`);
+
+  if ((fullDump || scopes.has('hours')) && data.business_hours) {
     const bh = typeof data.business_hours === 'string' ? JSON.parse(data.business_hours) : data.business_hours;
     lines.push(`영업시간: ${groupBusinessHours(bh)}`);
   }
 
-  if (data.facilities) {
+  if ((fullDump || scopes.has('facilities')) && data.facilities) {
     const fac = typeof data.facilities === 'string' ? JSON.parse(data.facilities) : data.facilities;
     const items = Object.entries(fac).map(([k, v]) => `${k}: ${v ? 'O' : 'X'}`).join(', ');
     lines.push(`편의시설: ${items}`);
   }
 
-  if (data.notice) lines.push(`공지: ${data.notice}`);
+  if ((fullDump || scopes.has('notice')) && data.notice) lines.push(`공지: ${data.notice}`);
 
   if (data.store_items) {
     const si = typeof data.store_items === 'string' ? JSON.parse(data.store_items) : data.store_items;
-    if (si.menu) {
+    if ((fullDump || scopes.has('menu') || scopes.has('price')) && si.menu) {
       const menu = si.menu.map(m => `${m.name} ${m.price}원${m.description ? ` (${m.description})` : ''}`).join(', ');
       lines.push(`메뉴: ${menu}`);
     }
-    if (si.department) {
+    if ((fullDump || scopes.has('department')) && si.department) {
       lines.push(`진료과목: ${si.department.join(', ')}`);
     }
   }
@@ -1181,7 +1199,7 @@ const storeNode = async (state) => {
     const headers = { "x-internal-secret": process.env.INTERNAL_SECRET_KEY, "Content-Type": "application/json" };
 
     const storeRes = await axios({ method: 'GET', url: `${internalApiBaseUrl}/stores/${state.storeId}`, headers });
-    let info = formatStoreInfo(storeRes.data);
+    let info = formatStoreInfo(storeRes.data, state.userQuery);
 
     // 이커머스 상품 조회 — keyword 있으면 ILIKE 검색, 없으면 전체(최대 20개)
     if (state.storeCategory === '이커머스') {
