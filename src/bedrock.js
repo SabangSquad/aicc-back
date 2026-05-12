@@ -1110,6 +1110,32 @@ function extractDateRange(query) {
 // 노드 5-3: Store (가게 정보 조회 — 로그인 불필요)
 const DAY_NAMES = { mon: '월', tue: '화', wed: '수', thu: '목', fri: '금', sat: '토', sun: '일' };
 
+// 같은 영업시간 가진 연속 요일을 묶어서 표현 ("월~금 04:00-18:30, 토·일 04:00-09:00")
+// LLM이 데이터 받고 임의로 묶다 오류내는 걸 방지 — 미리 정확하게 묶은 텍스트 제공
+function groupBusinessHours(bh) {
+  const order = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+  const groups = []; // [{ days: ['mon', 'tue', ...], time: '04:00-18:30' }, ...]
+  for (const day of order) {
+    const time = bh[day];
+    if (time == null) continue;
+    const last = groups[groups.length - 1];
+    if (last && last.time === time) {
+      last.days.push(day);
+    } else {
+      groups.push({ days: [day], time });
+    }
+  }
+  // 그룹별 표현 ("월~금" 또는 "토·일" 또는 단일 요일)
+  return groups.map(g => {
+    const dayStr = g.days.length === 1
+      ? DAY_NAMES[g.days[0]]
+      : g.days.length === 2
+        ? `${DAY_NAMES[g.days[0]]}·${DAY_NAMES[g.days[g.days.length - 1]]}`
+        : `${DAY_NAMES[g.days[0]]}~${DAY_NAMES[g.days[g.days.length - 1]]}`;
+    return `${dayStr} ${g.time === 'off' ? '휴무' : g.time}`;
+  }).join(', ');
+}
+
 function formatStoreInfo(data) {
   const lines = [];
   lines.push(`가게명: ${data.name}`);
@@ -1119,10 +1145,7 @@ function formatStoreInfo(data) {
 
   if (data.business_hours) {
     const bh = typeof data.business_hours === 'string' ? JSON.parse(data.business_hours) : data.business_hours;
-    const hours = Object.entries(bh)
-      .map(([day, time]) => `${DAY_NAMES[day] || day}: ${time === 'off' ? '휴무' : time}`)
-      .join(', ');
-    lines.push(`영업시간: ${hours}`);
+    lines.push(`영업시간: ${groupBusinessHours(bh)}`);
   }
 
   if (data.facilities) {
