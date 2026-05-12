@@ -339,8 +339,8 @@ const supervisorNode = async (state) => {
   }
 
   // 가게 정보 카탈로그 질문(상품정보/메뉴/진료과목/가격)은 store 강제
-  // "내 주문 상품" 같은 본인 데이터 묻는 건 제외
-  if (intent !== 'store' && !q.match(/내\s|그거|이거|주문\s*\d|주문번호/)) {
+  // "내 주문 상품" 같은 명시적 본인 데이터 묻는 건 제외 ("그거 얼마?"는 메뉴 후속일 수 있어 포함)
+  if (intent !== 'store' && !q.match(/내\s|주문\s*\d|주문번호|^내\s|^주문/)) {
     const isStoreInfo = q.match(/^(상품\s*정보|상품\s*설명|상품\s*소개|메뉴|진료과목|진료\s*과|가격|영업시간|운영시간|주차|위치|주소|공지)/);
     // "X 얼마?" / "X 가격?" 류 — 상품/메뉴명 + 가격 질문도 store
     const isItemPriceQuery = q.match(/얼마(예요|야|입니까|인가요)?\??$|얼마\s*예요|가격\s*(이|은)?\s*얼마|가격\s*(알려|알려줘)/);
@@ -373,10 +373,11 @@ const supervisorNode = async (state) => {
   }
 
   // 지시어("그거/이거/저거/그 주문/그 예약") + 본인 데이터 후속 조회 → api 강제
-  // 단, 정책/규정 키워드 있으면 rag 유지 (예: "그거 환불 가능?")
+  // 단, 정책/규정 키워드 또는 가격 질문은 제외 (가격은 store/rag)
   if (state.customerId && intent !== 'api' && intent !== 'escalate') {
     const hasReference = q.match(/그거|이거|저거|그\s*(주문|배송|예약|상품|건)|방금|그건/);
-    const isInquiryAboutOwn = q.match(/뭐|어떻|언제|얼마|어디|상태|품목|상품|샀|시켰|주문했|받았|예약했/);
+    // "얼마" 제거 — "그거 얼마야?"는 메뉴 가격 후속(store)일 가능성 높음. 위 store 카탈로그 룰에서 처리됨
+    const isInquiryAboutOwn = q.match(/뭐|어떻|언제|어디|상태|품목|상품|샀|시켰|주문했|받았|예약했/);
     const isPolicyQuestion = q.match(/규정|정책|어떻게\s*해|되나요|가능한가요|며칠|기간/);
     if (hasReference && isInquiryAboutOwn && !isPolicyQuestion) {
       console.log(`   └─ 🔄 지시어 + 본인 데이터 조회 → api 강제`);
