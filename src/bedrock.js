@@ -359,6 +359,17 @@ const supervisorNode = async (state) => {
     }
   }
 
+  // 후속 정책 질문 — "수수료/요금/벌금/페널티" + memory에 정책 토픽 흔적 → rag 강제
+  // 예: 이전 턴 "취소 규정?" → 이번 턴 "수수료 없어요?" → memory에 "취소" 흔적 있으니 같은 정책 매뉴얼 검색
+  if (intent !== 'rag' && intent !== 'api' && intent !== 'escalate') {
+    const isPolicyFollowup = q.match(/수수료|위약금|페널티|벌금|불이익|면제|^얼마|^비용|^요금/);
+    const memHasPolicyTopic = state.historySummary && /규정|정책|취소|환불|교환|반품|변경|기한|마감/.test(state.historySummary);
+    if (isPolicyFollowup && memHasPolicyTopic) {
+      console.log(`   └─ 🔄 후속 정책 질문 (수수료/요금 등) + memory에 정책 토픽 → rag 강제 (was: ${intent})`);
+      intent = 'rag';
+    }
+  }
+
   // 지시어("그거/이거/저거/그 주문/그 예약") + 본인 데이터 후속 조회 → api 강제
   // 단, 정책/규정 키워드 있으면 rag 유지 (예: "그거 환불 가능?")
   if (state.customerId && intent !== 'api' && intent !== 'escalate') {
