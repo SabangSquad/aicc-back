@@ -1395,6 +1395,14 @@ const composerNode = async (state) => {
       .trim();
   }
 
+  // "개인정보 보호 정책에 따라 ~ 제공할 수 없습니다" 류 환각 문구 강제 제거
+  // (가게 정보/매뉴얼 데이터는 공개 정보. LLM이 자체적으로 거부 멘트 붙이는 환각)
+  finalAnswer = finalAnswer
+    .replace(/[\s.,]*다만,?\s*개인정보\s*보호\s*[^.]*?제공[^.]*?없습니다\.?/g, '')
+    .replace(/[\s.,]*개인정보\s*보호\s*정책[^.]*?(없습니다|불가합니다|어렵습니다)\.?/g, '')
+    .replace(/\s*\n\s*\n/g, '\n\n')
+    .trim();
+
   return {
     finalAnswer,
     suggestedQuestions: [],
