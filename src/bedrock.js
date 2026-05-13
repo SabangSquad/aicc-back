@@ -924,17 +924,10 @@ const apiNode = async (state) => {
         console.log(`      └─ ⚠️ 매뉴얼 0건 매칭`);
       }
       if (manualDocs) {
-        // categoryHint와 실제 매칭된 매뉴얼 카테고리 비교 — 정확 매칭 없으면 미등록 안내 추가
-        // (SQL이 카테고리 우선 정렬이지만 매칭 없으면 다른 카테고리 매뉴얼이 들어옴 → 정책 답변 부정확)
-        const hasExactCategoryMatch = categoryHint
-          ? manualSources?.some(s => s.category === categoryHint)
-          : true;
-        if (categoryHint && !hasExactCategoryMatch) {
-          accumulatedContext += `\n\n[참고 매뉴얼 안내]: 이 매장에 [${categoryHint}] 정책 매뉴얼이 등록되어 있지 않습니다. 사장님께 직접 문의가 필요한 사안임을 사용자에게 친절히 안내하세요.`;
-          console.log(`      └─ ⚠️ categoryHint='${categoryHint}' 정확 매칭 없음 → 매장 문의 안내 추가`);
-        } else {
-          accumulatedContext += `\n\n[참고 매뉴얼]: ${manualDocs}`;
-        }
+        // 매뉴얼 fetch 성공 → 그대로 sourceData에 추가
+        // (카테고리명 정확 일치 비교는 매장별 명명 다양성 때문에 false-negative 너무 큼.
+        //  composer가 매뉴얼 내용 보고 환불 정책 인용 여부 판단)
+        accumulatedContext += `\n\n[참고 매뉴얼]: ${manualDocs}`;
         if (manualSources?.length) dataSources.push(...manualSources);
         apiCallTrace.push({ route: 'pgvector/manuals', method: 'EMBEDDING', ok: true, count: manualSources?.length || 0 });
       } else if (categoryHint) {
