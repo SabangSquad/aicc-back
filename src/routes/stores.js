@@ -722,6 +722,59 @@ router.patch('/:store_id/manuals/:manual_id', isStoreOwner, async (req, res) => 
 
 /**
  * @swagger
+ * /stores/{store_id}/manuals/{manual_id}:
+ *   delete:
+ *     summary: "매뉴얼 삭제"
+ *     tags: [Stores]
+ *     parameters:
+ *       - in: path
+ *         name: store_id
+ *         required: true
+ *         schema: { type: integer }
+ *       - in: path
+ *         name: manual_id
+ *         required: true
+ *         schema: { type: integer }
+ *     responses:
+ *       200: { description: "삭제 완료" }
+ *       400: { description: "잘못된 요청" }
+ *       404: { description: "매뉴얼 없음" }
+ */
+router.delete('/:store_id/manuals/:manual_id', isStoreOwner, async (req, res) => {
+  try {
+    const storeId  = parseInt(req.params.store_id, 10);
+    const manualId = parseInt(req.params.manual_id, 10);
+    if (Number.isNaN(storeId) || Number.isNaN(manualId)) {
+      return res.status(400).json({ error: '유효하지 않은 ID입니다.' });
+    }
+
+    const { rows } = await pool.query(
+      `DELETE FROM manuals
+       WHERE store_id = $1 AND manual_id = $2
+       RETURNING manual_id, title, category`,
+      [storeId, manualId]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ error: '매뉴얼을 찾을 수 없습니다.' });
+    }
+
+    return res.json({
+      deleted: rows[0],
+      _links: [
+        { rel: 'list', href: `/stores/${storeId}/manuals`, method: 'GET' },
+        { rel: 'create', href: `/stores/${storeId}/manuals`, method: 'POST' }
+      ]
+    });
+  } catch (err) {
+    console.error('매뉴얼 삭제 오류:', err);
+    return res.status(500).json({ error: '서버 오류가 발생했습니다.' });
+  }
+});
+
+
+/**
+ * @swagger
  * /stores/{store_id}/products:
  *   get:
  *     summary: "가게 상품 목록 조회"

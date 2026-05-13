@@ -707,6 +707,15 @@
       - 토큰 budget: prompt(~550) + source(~1000토큰) + history(~330) + 출력 400 = ~2280 < 3072
     - 효과: 매뉴얼이 fetch되면 항상 composer가 보고 정책 답변에 인용
 
+77. **add: 매뉴얼 삭제 엔드포인트 (DELETE /stores/:store_id/manuals/:manual_id)**
+
+    - 누락: GET / POST / PATCH는 있는데 DELETE만 빠져 있었음 — 사장이 잘못 등록하거나 폐기된 매뉴얼 지울 방법 없음
+    - 추가: `router.delete('/:store_id/manuals/:manual_id', isStoreOwner, ...)`
+      - isStoreOwner 미들웨어로 매장 소유자만 삭제 가능
+      - `DELETE FROM manuals WHERE store_id = $1 AND manual_id = $2 RETURNING manual_id, title, category`
+      - 404: 매뉴얼 없음, 400: 잘못된 ID, 200: 삭제된 매뉴얼 정보 + _links
+    - Swagger 문서도 함께 추가
+
 ### 대화 품질 개선 + 토큰 오버플로우 방지 + 솔루션 분석 안정화
 
 1. **솔루션 분석 토큰 오버플로우 해결**
