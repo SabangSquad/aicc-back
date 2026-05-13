@@ -716,6 +716,17 @@
       - 404: 매뉴얼 없음, 400: 잘못된 ID, 200: 삭제된 매뉴얼 정보 + _links
     - Swagger 문서도 함께 추가
 
+78. **add: 상품 삭제 엔드포인트 (DELETE /products/:product_id)**
+
+    - 누락: GET / PATCH는 있는데 DELETE만 빠져 있었음 — 사장이 단종된 상품 / 잘못 등록한 상품 지울 방법 없음
+    - 추가: `router.route('/:product_id').delete(...)`
+      - URL에 store_id가 없어 isStoreOwner 미들웨어 못 씀 → DB에서 `SELECT store_id FROM products` 후 직접 권한 체크
+      - 내부 시크릿 / ADMIN / 해당 가게 OWNER만 삭제 가능
+      - `DELETE FROM products WHERE product_id = $1 RETURNING product_id, store_id, name, price`
+      - 200: 삭제된 상품 정보 + _links, 401/403/404/409 응답
+      - PostgreSQL FK 위반(err.code === '23503', 주문 등에서 참조 중)은 409로 안내: "이 상품을 참조하는 주문이 있어 삭제할 수 없습니다. 관련 주문 처리 후 다시 시도해 주세요."
+    - Swagger 문서도 함께 추가
+
 ### 대화 품질 개선 + 토큰 오버플로우 방지 + 솔루션 분석 안정화
 
 1. **솔루션 분석 토큰 오버플로우 해결**
