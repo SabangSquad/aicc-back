@@ -471,6 +471,32 @@ const supervisorNode = async (state) => {
     reservationType = null;
   }
 
+  // 요일 표현 ("금요일", "토요일") 감지 → JS로 직접 날짜 계산해서 LLM 추출값 덮어쓰기
+  // (LLM이 요일 계산을 자주 틀려서 — 예: 수요일에 "금요일" 물으면 LLM이 오늘 날짜로 잘못 분류)
+  const dayMatch = q.match(/(월|화|수|목|금|토|일)요일/);
+  if (dayMatch) {
+    const dayMap = { '월': 1, '화': 2, '수': 3, '목': 4, '금': 5, '토': 6, '일': 0 };
+    const target = dayMap[dayMatch[1]];
+    const nowKst = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Seoul' }));
+    const isNextWeek = /다음\s*주/.test(q);
+    // 이번주: 가장 가까운 미래 같은 요일 (오늘이 그 요일이면 다음 주 — 보통 미래 의미)
+    // 다음주: 다음주 그 요일
+    const diff = isNextWeek
+      ? ((7 - nowKst.getDay()) + target) || 7
+      : ((target - nowKst.getDay() + 7) % 7) || 7;
+    const d = new Date(nowKst);
+    d.setDate(d.getDate() + diff);
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    const dateStr = `${yyyy}-${mm}-${dd}`;
+    if (dateStart !== dateStr) {
+      console.log(`   └─ 🔄 요일 표현(${dayMatch[0]}) 감지 → 날짜 ${dateStart || 'null'} → ${dateStr} 보정`);
+      dateStart = dateStr;
+      dateEnd = dateStr;
+    }
+  }
+
   console.log(`   └─ ✅ 최종 결정: [${intent.toUpperCase()}]${dateStart ? ` 날짜: ${dateStart}~${dateEnd}` : ''}${productKeyword ? ` 상품: ${productKeyword}` : ''}${reservationType ? ` 예약타입: ${reservationType}` : ''}`);
   return { intent, dateStart, dateEnd, productKeyword, reservationType };
 };
