@@ -924,15 +924,15 @@ const apiNode = async (state) => {
         console.log(`      └─ ⚠️ 매뉴얼 0건 매칭`);
       }
       if (manualDocs) {
-        // 매뉴얼 fetch 성공 → 그대로 sourceData에 추가
-        // (카테고리명 정확 일치 비교는 매장별 명명 다양성 때문에 false-negative 너무 큼.
-        //  composer가 매뉴얼 내용 보고 환불 정책 인용 여부 판단)
-        accumulatedContext += `\n\n[참고 매뉴얼]: ${manualDocs}`;
+        // 매뉴얼 fetch 성공 → sourceData 맨 앞에 prepend
+        // (composer source_data truncate가 앞 보존이라 맨 뒤에 두면 잘려서 LLM이 못 봄.
+        //  매뉴얼은 정책 답변의 핵심 근거이므로 우선 보존)
+        accumulatedContext = `[참고 매뉴얼]: ${manualDocs}\n\n${accumulatedContext}`;
         if (manualSources?.length) dataSources.push(...manualSources);
         apiCallTrace.push({ route: 'pgvector/manuals', method: 'EMBEDDING', ok: true, count: manualSources?.length || 0 });
       } else if (categoryHint) {
-        // 매뉴얼 0건 — 매장에 매뉴얼 자체가 등록 안 됨
-        accumulatedContext += `\n\n[참고 매뉴얼 안내]: 이 매장에 [${categoryHint}] 정책 매뉴얼이 등록되어 있지 않습니다. 사장님께 직접 문의가 필요한 사안임을 사용자에게 친절히 안내하세요.`;
+        // 매뉴얼 0건 — 매장에 매뉴얼 자체가 등록 안 됨 (안내도 맨 앞에 prepend)
+        accumulatedContext = `[참고 매뉴얼 안내]: 이 매장에 [${categoryHint}] 정책 매뉴얼이 등록되어 있지 않습니다. 사장님께 직접 문의가 필요한 사안임을 사용자에게 친절히 안내하세요.\n\n${accumulatedContext}`;
         console.log(`      └─ ⚠️ 매뉴얼 0건 + categoryHint='${categoryHint}' → 매장 문의 안내 추가`);
       }
     } catch (e) {
@@ -1431,9 +1431,10 @@ const composerNode = async (state) => {
 
   const res = await invokePrompt("composer", {
     user_input: state.userQuery,
-    // 컨텍스트 한계(3072 토큰) 고려: prompt(~550) + source(~670) + history(~330) + 입력(~80) = ~1630 + 출력 400 = 2030 < 3072
+    // 컨텍스트 한계(3072 토큰) 고려: prompt(~550) + source(~1000) + history(~330) + 입력(~80) = ~1960 + 출력 400 = 2360 < 3072
     // composer 프롬프트가 step-by-step 추론 강화로 길어진 상태 + 매뉴얼 fetch 시 source 큼
-    source_data: truncate(state.sourceData, 1000),
+    // 매뉴얼은 apiNode에서 맨 앞에 prepend됨 → 앞 보존 truncate로 매뉴얼 우선 살림
+    source_data: truncate(state.sourceData, 1500),
     history: truncate(historyForComposer, 400, { keepEnd: true }),
     today
   });

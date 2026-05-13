@@ -695,6 +695,18 @@
       - "고객센터로 문의" / "고객센터에 문의" / "정확한 확인을 위해 고객센터로 문의" → "매장 사장님께 문의" 로 자동 변환
     - 효과: 매뉴얼 미등록 시 사용자가 어디로 문의해야 할지 명확히 안내. 매뉴얼 등록되어 있으면 그 내용으로 단정 답변
 
+76. **fix: composer source_data truncate에 매뉴얼이 잘려 정책 답변 회피**
+
+    - 증상: "주문 320 환불 가능?" → 매뉴얼 [score=0.597 에브리샵 환불 규정] fetch 됐는데도 composer가 "확인되지 않았습니다" 회피
+    - 원인: apiNode accumulatedContext 구조가 `[참고 데이터 회차1..N] + [참고 매뉴얼]: 환불 규정` 순서로 매뉴얼이 맨 뒤. composer source_data가 `truncate(_, 1000)` 앞 보존이라 회차 데이터로 1000자 채워지면 매뉴얼이 잘려서 LLM이 못 봄
+    - 수정 1: apiNode에서 매뉴얼/매뉴얼 안내를 sourceData 맨 앞에 prepend
+      - `[참고 매뉴얼]: ${manualDocs}\n\n${accumulatedContext}` 형태로 매뉴얼 우선 보존
+      - 정책 답변의 핵심 근거이므로 앞쪽에 두고 truncate에서 살아남게
+    - 수정 2: composer source_data truncate 1000 → 1500자
+      - 매뉴얼 ~300자 + 회차 데이터(orders+cases+items) ~600~900자 합산 마진 확보
+      - 토큰 budget: prompt(~550) + source(~1000토큰) + history(~330) + 출력 400 = ~2280 < 3072
+    - 효과: 매뉴얼이 fetch되면 항상 composer가 보고 정책 답변에 인용
+
 ### 대화 품질 개선 + 토큰 오버플로우 방지 + 솔루션 분석 안정화
 
 1. **솔루션 분석 토큰 오버플로우 해결**
