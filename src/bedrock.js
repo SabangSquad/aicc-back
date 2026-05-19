@@ -1492,6 +1492,8 @@ const composerNode = async (state) => {
     .replace(/정확한\s*확인을?\s*위해\s*고객\s*센터로?\s*문의/g, '정확한 확인을 위해 매장 사장님께 문의')
     .replace(/고객\s*센터로?\s*문의해\s*주세요/g, '매장 사장님께 문의해 주세요')
     .replace(/고객\s*센터에?\s*문의/g, '매장 사장님께 문의')
+    .replace(/콜\s*센터로?\s*문의/g, '매장 사장님께 문의')
+    .replace(/고객\s*센터에서\s*안내/g, '매장 사장님께 문의')
     .trim();
 
   return {
