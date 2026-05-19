@@ -1,11 +1,13 @@
 name: CI Pipeline - Merge
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
     paths:
       - "Dockerfile"
       - "src/**"
+      - "scripts/**"
       - "package*.json"
 
 env:
