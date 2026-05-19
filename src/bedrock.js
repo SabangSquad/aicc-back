@@ -1196,7 +1196,7 @@ function formatStoreInfo(data, query = '') {
   const fullDump = scopes.size === 0; // 키워드 매치 없으면 전체 (fallback)
   const lines = [];
 
-  // 가게명/업종은 항상 포함 (간략)
+  // 가게명/업종은 항상 포함
   lines.push(`가게명: ${data.name} (${data.category})`);
 
   if (fullDump || scopes.has('address')) lines.push(`주소: ${data.address}`);

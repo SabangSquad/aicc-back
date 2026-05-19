@@ -33,6 +33,7 @@ data/
 scripts/*
 !scripts/recategorize-cases.js
 !scripts/eval-export.js
+!scripts/eval-solutions.js
 src/migration.js
 
 # 테스트 케이스
