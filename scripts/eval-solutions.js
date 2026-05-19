@@ -1,12 +1,13 @@
 // scripts/eval-solutions.js
-// solutionAnalyzer 평가용: 최근 N건 상담을 입력으로 ai_analysis 생성 후 평가용 markdown 출력
+// solutionAnalyzer 평가용: N개 매장(또는 같은 매장 반복)에 대해 ai_analysis 생성 후 평가용 markdown 출력
 //
 // 사용:
-//   node scripts/eval-solutions.js [store_id|random] [limit=10] [max_case_id=500]
-//   node scripts/eval-solutions.js random 10 500   # 랜덤 매장 (eval-export와 다른 매장 가능)
-//   node scripts/eval-solutions.js 3 10 500        # store_id=3 고정 (eval-export와 같은 매장 평가하려면 이쪽)
+//   node scripts/eval-solutions.js [store_id|random] [limit=10] [max_case_id=500] [iterations=1]
+//   node scripts/eval-solutions.js random 10 500 10    # 랜덤 매장 10개 각각 1회 (총 10 iteration)
+//   node scripts/eval-solutions.js 79 10 500 1          # store_id=79 1회
+//   node scripts/eval-solutions.js 79 10 500 5          # store_id=79 5회 반복 (일관성 측정)
 //
-// 출력: eval-solutions-store{id}-{ts}.md
+// 출력: eval-solutions-{ts}.md (다중 매장이면 매장별 섹션)
 // 평가 항목: headline 적절성 / issues 가치 / strategies 실행가능성 / urgency 적정성
 
 import 'dotenv/config';
@@ -17,6 +18,7 @@ import { analyzeSolutions } from '../src/bedrock.js';
 const storeArg = process.argv[2];
 const limit = parseInt(process.argv[3] || '10', 10);
 const maxCaseId = parseInt(process.argv[4] || '500', 10);
+const iterations = parseInt(process.argv[5] || '1', 10);
 const storeIdFixed = storeArg && storeArg !== 'random' ? parseInt(storeArg, 10) : null;
 
 function escapeMd(s, maxLen = 200) {
@@ -24,7 +26,7 @@ function escapeMd(s, maxLen = 200) {
   return String(s).replace(/\|/g, '\\|').replace(/\r?\n/g, ' / ').slice(0, maxLen);
 }
 
-async function pickRandomStoreId() {
+async function pickNRandomStoreIds(n) {
   const { rows } = await pool.query(
     `SELECT store_id FROM (
        SELECT c.store_id, COUNT(*)::int AS cnt
@@ -33,30 +35,16 @@ async function pickRandomStoreId() {
        GROUP BY c.store_id
        HAVING COUNT(*) >= $2
      ) t
-     ORDER BY RANDOM() LIMIT 1`,
-    [maxCaseId, limit]
+     ORDER BY RANDOM() LIMIT $3`,
+    [maxCaseId, limit, n]
   );
-  return rows[0]?.store_id || null;
+  return rows.map(r => r.store_id);
 }
 
-async function main() {
-  let storeId = storeIdFixed;
-  if (storeId === null || isNaN(storeId)) {
-    storeId = await pickRandomStoreId();
-    if (!storeId) {
-      console.error(`❌ 평가 가능한 매장 없음 (case_id < ${maxCaseId} + summary 있는 케이스 ${limit}건 이상)`);
-      await pool.end();
-      process.exit(1);
-    }
-    console.log(`🎲 랜덤 매장 선택: store_id=${storeId}`);
-    console.log(`   ⚠️  추천/감정 평가도 같은 매장으로 돌리려면: node scripts/eval-export.js ${storeId} ${limit} ${maxCaseId}`);
-  }
-
-  console.log(`🔍 store_id=${storeId} 솔루션 분석 평가: 최근 ${limit}건 (case_id < ${maxCaseId})`);
-
-  // 1. case_id < maxCaseId + summary 있는 최근 limit건
+async function analyzeOneStore(storeId) {
+  // 케이스 limit건
   const { rows: cases } = await pool.query(
-    `SELECT c.case_id, c.category, c.emotion, c.summary, c.status, c.created_at, c.closed_at,
+    `SELECT c.case_id, c.category, c.emotion, c.summary, c.status, c.created_at,
             s.category AS store_category, s.name AS store_name
      FROM cases c
      LEFT JOIN stores s ON c.store_id = s.store_id
@@ -67,13 +55,10 @@ async function main() {
   );
 
   if (cases.length === 0) {
-    console.error('❌ 평가할 케이스 0건');
-    await pool.end();
-    process.exit(1);
+    return { storeId, cases: [], analysis: null, statsText: '', summaryText: '', skipped: true };
   }
-  console.log(`   └─ ${cases.length}건 확보`);
 
-  // 2. 통계 계산 (stores.js /solutions 로직 그대로)
+  // 통계
   const byCategoryMap = {};
   const byEmotionMap = {};
   cases.forEach(c => {
@@ -90,13 +75,10 @@ async function main() {
   const totalCases = cases.length;
   const aiResolved = cases.filter(c => c.status === 'AI자동해결').length;
   const negativeEmotions = cases.filter(c => c.emotion === '화남' || c.emotion === '짜증').length;
-
   const aiResolveRate = totalCases > 0 ? aiResolved / totalCases : 0;
   const negativeRate = totalCases > 0 ? negativeEmotions / totalCases : 0;
-  // 만족도는 평가용이라 0 처리 (시간 범위 아닌 case_id 기준이라 satisfactions 매핑 애매)
   const score = Math.round((aiResolveRate * 40) + ((1 - negativeRate) * 30));
 
-  // 3. AI 인풋 텍스트 구성
   const statsText = [
     `총 상담: ${totalCases}건 / case_id < ${maxCaseId} 최근 ${limit}건`,
     `카테고리별: ${byCategory.map(r => `${r.category} ${r.count}건`).join(', ') || '없음'}`,
@@ -111,80 +93,141 @@ async function main() {
     })
     .join('\n');
 
-  // 4. analyzeSolutions 호출
-  console.log(`🧠 analyzeSolutions 호출 중...`);
   let analysis;
   try {
     analysis = await analyzeSolutions(statsText, summaryText);
   } catch (e) {
-    console.error(`❌ analyzeSolutions 실패: ${e.message}`);
+    console.error(`   ❌ analyzeSolutions 실패 (store_id=${storeId}): ${e.message}`);
     analysis = { headline: 'ERROR', issues: [], strategies: [] };
   }
 
-  // 5. Markdown 생성
-  const storeCategory = cases[0]?.store_category || 'N/A';
-  const storeName = cases[0]?.store_name || `store_${storeId}`;
-  const ts = new Date().toISOString();
-  let md = `# 솔루션 분석 평가 — ${storeName}\n\n`;
-  md += `- 생성 시각: ${ts}\n`;
-  md += `- store_id: ${storeId} (업종: ${storeCategory})\n`;
-  md += `- 인풋: case_id < ${maxCaseId} 최근 ${limit}건 (summary 있는 것만)\n`;
-  md += `- 품질 score: **${score}점** (AI해결률 ${(aiResolveRate * 100).toFixed(0)}% × 40 + 부정감정 비율 역수 ${((1 - negativeRate) * 100).toFixed(0)}% × 30, 만족도 제외)\n\n`;
+  return {
+    storeId,
+    storeName: cases[0]?.store_name || `store_${storeId}`,
+    storeCategory: cases[0]?.store_category || 'N/A',
+    cases,
+    analysis,
+    statsText,
+    summaryText,
+    score,
+    aiResolveRate,
+    negativeRate,
+    skipped: false,
+  };
+}
 
-  md += `## AI 분석 결과 (평가 대상)\n\n`;
-  md += `### Headline\n> ${analysis.headline || '(없음)'}\n\n`;
-  md += `### Issues (${(analysis.issues || []).length}개)\n`;
-  if (analysis.issues && analysis.issues.length > 0) {
-    analysis.issues.forEach((iss, idx) => {
-      if (typeof iss === 'string') {
-        md += `${idx + 1}. ${iss}\n`;
-      } else {
-        md += `${idx + 1}. **${iss.title || iss.headline || ''}**: ${iss.description || iss.detail || JSON.stringify(iss)}\n`;
-      }
-    });
-  } else {
-    md += `(없음)\n`;
+function renderStoreSection(idx, result) {
+  if (result.skipped) {
+    return `### 매장 #${idx} — store_id=${result.storeId} (스킵: 케이스 ${limit}건 미달)\n\n---\n\n`;
   }
-  md += `\n### Strategies (${(analysis.strategies || []).length}개)\n`;
-  if (analysis.strategies && analysis.strategies.length > 0) {
-    analysis.strategies.forEach((st, idx) => {
-      if (typeof st === 'string') {
-        md += `${idx + 1}. ${st}\n`;
-      } else {
+  let md = `### 매장 #${idx} — store_id=${result.storeId} · ${result.storeName} (${result.storeCategory})\n\n`;
+  md += `- 품질 score: **${result.score}점** (AI해결률 ${(result.aiResolveRate * 100).toFixed(0)}% / 부정감정 ${((result.negativeRate) * 100).toFixed(0)}%)\n`;
+  md += `- 인풋 케이스: ${result.cases.length}건\n\n`;
+
+  const a = result.analysis;
+  md += `#### Headline\n> ${a.headline || '(없음)'}\n\n`;
+  md += `#### Issues (${(a.issues || []).length}개)\n`;
+  if (a.issues && a.issues.length > 0) {
+    a.issues.forEach((iss, i) => {
+      if (typeof iss === 'string') md += `${i + 1}. ${iss}\n`;
+      else md += `${i + 1}. **${iss.title || iss.headline || ''}**: ${iss.description || iss.detail || JSON.stringify(iss)}\n`;
+    });
+  } else md += `(없음)\n`;
+  md += `\n#### Strategies (${(a.strategies || []).length}개)\n`;
+  if (a.strategies && a.strategies.length > 0) {
+    a.strategies.forEach((st, i) => {
+      if (typeof st === 'string') md += `${i + 1}. ${st}\n`;
+      else {
         const urg = st.urgency ? ` [urgency=${st.urgency}]` : '';
-        md += `${idx + 1}. **${st.title || st.headline || ''}**${urg}: ${st.description || st.action || JSON.stringify(st)}\n`;
+        md += `${i + 1}. **${st.title || st.headline || ''}**${urg}: ${st.description || st.action || JSON.stringify(st)}\n`;
       }
     });
-  } else {
-    md += `(없음)\n`;
-  }
+  } else md += `(없음)\n`;
 
-  md += `\n## 평가 항목 (점수 입력)\n\n`;
-  md += `| 평가 항목 | 1~5점 | 메모 |\n`;
-  md += `|---|---|---|\n`;
-  md += `| Headline 적절성 (매장 현황 정확히 요약) |  |  |\n`;
-  md += `| Issues 가치 (실제 운영에 의미 있는 문제 발견) |  |  |\n`;
-  md += `| Strategies 실행가능성 (사장이 실제로 할 수 있는 대응) |  |  |\n`;
-  md += `| Urgency 등급 적정성 (high/medium/low 적절) |  |  |\n`;
-  md += `| 전체 솔루션 평가 (1~5 종합) |  |  |\n\n`;
+  md += `\n#### 평가 (1~5점)\n`;
+  md += `| 항목 | 점수 | 메모 |\n|---|---|---|\n`;
+  md += `| Headline 적절성 |  |  |\n`;
+  md += `| Issues 가치 |  |  |\n`;
+  md += `| Strategies 실행가능성 |  |  |\n`;
+  md += `| Urgency 적정성 |  |  |\n`;
+  md += `| 전체 솔루션 평가 |  |  |\n\n`;
 
-  md += `\n## 분석에 쓰인 케이스 ${cases.length}건\n\n`;
+  md += `<details>\n<summary>분석에 쓰인 케이스 ${result.cases.length}건 + 입력 텍스트</summary>\n\n`;
   md += `| # | case_id | 카테고리 | 감정 | status | summary | 생성일 |\n`;
   md += `|---|---------|---------|------|--------|---------|--------|\n`;
-  cases.forEach((c, i) => {
+  result.cases.forEach((c, i) => {
     md += `| ${i + 1} | ${c.case_id} | ${c.category ?? '미분류'} | ${c.emotion ?? '없음'} | ${c.status ?? ''} | ${escapeMd(c.summary, 100)} | ${c.created_at ? new Date(c.created_at).toISOString().slice(0, 10) : ''} |\n`;
   });
+  md += `\n**statsText**:\n\`\`\`\n${result.statsText}\n\`\`\`\n\n`;
+  md += `**summaryText**:\n\`\`\`\n${result.summaryText}\n\`\`\`\n\n</details>\n\n---\n\n`;
+  return md;
+}
 
-  md += `\n## 통계 (analyzeSolutions에 입력된 값)\n\n`;
-  md += `**statsText**:\n\`\`\`\n${statsText}\n\`\`\`\n\n`;
-  md += `**summaryText**:\n\`\`\`\n${summaryText}\n\`\`\`\n`;
+async function main() {
+  // 매장 선택
+  let storeIds = [];
+  if (storeIdFixed !== null && !isNaN(storeIdFixed)) {
+    // 고정 매장 → iterations 만큼 반복
+    for (let i = 0; i < iterations; i++) storeIds.push(storeIdFixed);
+    if (iterations > 1) console.log(`🔁 store_id=${storeIdFixed}로 ${iterations}회 반복 (일관성 측정)`);
+  } else {
+    // 랜덤: iterations 만큼 다른 매장
+    storeIds = await pickNRandomStoreIds(iterations);
+    if (storeIds.length === 0) {
+      console.error(`❌ 평가 가능한 매장 0개 (case_id < ${maxCaseId} + summary 있는 케이스 ${limit}건 이상)`);
+      await pool.end();
+      process.exit(1);
+    }
+    if (storeIds.length < iterations) {
+      console.warn(`⚠️  조건 충족 매장이 ${storeIds.length}개뿐, 요청한 ${iterations}개보다 적음`);
+    }
+    console.log(`🎲 랜덤 매장 ${storeIds.length}개 선택: ${storeIds.join(', ')}`);
+  }
 
-  // 6. 파일 저장
+  // 각 매장 분석
+  const results = [];
+  for (let i = 0; i < storeIds.length; i++) {
+    const sid = storeIds[i];
+    console.log(`🧠 [${i + 1}/${storeIds.length}] store_id=${sid} analyzeSolutions 호출...`);
+    const r = await analyzeOneStore(sid);
+    results.push(r);
+  }
+
+  // Markdown 생성
+  const ts = new Date().toISOString();
+  let md = `# 솔루션 분석 평가 — ${results.length} iteration\n\n`;
+  md += `- 생성 시각: ${ts}\n`;
+  md += `- 인자: store=${storeArg ?? 'random'} / limit=${limit} / maxCaseId=${maxCaseId} / iterations=${iterations}\n`;
+  md += `- 평가 항목: Headline 적절성 / Issues 가치 / Strategies 실행가능성 / Urgency 적정성 / 전체\n\n`;
+
+  md += `## 매장 요약\n\n`;
+  md += `| # | store_id | 업종 | 케이스 | score | Headline 한 줄 |\n`;
+  md += `|---|----------|------|--------|-------|----------------|\n`;
+  results.forEach((r, i) => {
+    if (r.skipped) {
+      md += `| ${i + 1} | ${r.storeId} | - | 0 | - | (스킵) |\n`;
+    } else {
+      md += `| ${i + 1} | ${r.storeId} | ${r.storeCategory} | ${r.cases.length} | ${r.score} | ${escapeMd(r.analysis.headline, 60)} |\n`;
+    }
+  });
+
+  md += `\n## 매장별 상세 + 평가\n\n`;
+  results.forEach((r, i) => {
+    md += renderStoreSection(i + 1, r);
+  });
+
+  md += `\n## 종합 평가 (전체 ${results.length} iteration)\n\n`;
+  md += `| 항목 | 평균 점수 (직접 계산) | 메모 |\n|---|---|---|\n`;
+  md += `| Headline 적절성 |  |  |\n`;
+  md += `| Issues 가치 |  |  |\n`;
+  md += `| Strategies 실행가능성 |  |  |\n`;
+  md += `| Urgency 적정성 |  |  |\n`;
+  md += `| 전체 |  |  |\n`;
+
   const stamp = ts.slice(0, 19).replace(/[:T]/g, '-');
-  const filename = `eval-solutions-store${storeId}-${stamp}.md`;
+  const filename = `eval-solutions-iter${results.length}-${stamp}.md`;
   fs.writeFileSync(filename, md, 'utf8');
-  console.log(`\n✅ 솔루션 평가 데이터 → ${filename}`);
-  console.log(`   AI 분석 결과 + 인풋 케이스 ${cases.length}건 + 평가 입력 칸 포함`);
+  console.log(`\n✅ 솔루션 평가 데이터 ${results.length} iteration → ${filename}`);
 
   await pool.end();
 }

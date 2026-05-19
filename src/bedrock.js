@@ -1339,7 +1339,7 @@ const storeNode = async (state) => {
           info += `\n${label} 예약된 시간: 없음 (전 시간 가능)`;
         }
 
-        // 해당 기간 일자별 영업시간을 명시적으로 추출 (Composer가 쉽게 인용하도록)
+        // Composer가 쉽게 인용하도록 해당 기간 일자별 영업시간을 명시적으로 추출
         if (bh) {
           const hours = typeof bh === 'string' ? JSON.parse(bh) : bh;
           const dayKeys = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
