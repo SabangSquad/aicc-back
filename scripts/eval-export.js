@@ -256,8 +256,9 @@ async function main() {
   const filename = `eval-report-${suffix}-${stamp}.md`;
   fs.writeFileSync(filename, md, 'utf8');
 
+  const uniqueStoreIds = [...new Set(allRows.map(r => r.store_id))];
   console.log(`\n✅ 평가 데이터 ${allRows.length}건 → ${filename}`);
-  console.log(`   매장 ${storeIds.length}개 × ${casesPerStore}건/매장 (실제 추출: ${allRows.length}건)`);
+  console.log(`   매장 ${uniqueStoreIds.length}개 (실제 추출: ${allRows.length}건)`);
 
   await pool.end();
 }
