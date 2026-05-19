@@ -748,6 +748,17 @@
       - 로그: "🔄 요일 표현(금요일) 감지 → 날짜 2026-05-13 → 2026-05-15 보정"
     - 효과: LLM이 요일 계산 틀려도 코드 단계에서 정확한 날짜 보정. extractDateRange 함수와 같은 로직이지만 supervisor 단계에 먼저 적용 (LLM 결과 신뢰 안 함)
 
+81. **tool: 정성평가 데이터 추출 스크립트 (scripts/eval-export.js)**
+
+    - 목적: AI 솔루션 적절성 / 답변 추천 적절성 / 감정분석 정확성 3항목에 대해 케이스 N건 평가용 markdown 표 생성
+    - 동작:
+      - cases 테이블에서 summary IS NOT NULL 케이스 N건 (closed_at 최근순) SELECT
+      - 각 케이스 메시지 전체 가져와 마지막 고객 질문 + 마지막 챗봇 답변 추출
+      - analyzeCaseConversation 재호출해서 emotion/category/summary/suggested_reply 새로 얻음 (cases 테이블엔 suggested_reply 컬럼 없음 — UPDATE에 안 들어가 있어서)
+      - markdown 표(한눈에 보기) + 케이스별 상세 섹션 출력 → eval-report-store{id}-{ts}.md
+    - 사용: `node scripts/eval-export.js [store_id=1] [limit=10]`
+    - 평가 컬럼: 솔루션★(1~5) / 추천 적절(○/△/X) / 감정 정확(○/X) / 메모 — Notion/Sheets에 paste 후 빈칸 채우기
+
 ### 대화 품질 개선 + 토큰 오버플로우 방지 + 솔루션 분석 안정화
 
 1. **솔루션 분석 토큰 오버플로우 해결**
