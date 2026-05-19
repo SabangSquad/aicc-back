@@ -77,7 +77,8 @@ async function analyzeOneStore(storeId) {
   const negativeEmotions = cases.filter(c => c.emotion === '화남' || c.emotion === '짜증').length;
   const aiResolveRate = totalCases > 0 ? aiResolved / totalCases : 0;
   const negativeRate = totalCases > 0 ? negativeEmotions / totalCases : 0;
-  const score = Math.round((aiResolveRate * 40) + ((1 - negativeRate) * 30));
+  // 평가용 도구는 만족도 측정 안 함 → 70점 만점 가중 합산 후 100점 환산 (stores.js와 동일 로직)
+  const score = Math.round(((aiResolveRate * 40) + ((1 - negativeRate) * 30)) * 100 / 70);
 
   const statsText = [
     `총 상담: ${totalCases}건 / case_id < ${maxCaseId} 최근 ${limit}건`,

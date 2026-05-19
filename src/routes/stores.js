@@ -953,18 +953,19 @@ router.get('/:store_id/solutions', isStoreOwner, async (req, res) => {
        WHERE store_id = $1 AND collected_at >= NOW() - INTERVAL '1 hour' * $2`,
       [storeId, hours]
     );
-    const satisfactionAvg = parseFloat(satRows[0]?.avg_score) || 0;
+    // 만족도 데이터 없으면 NULL — "0점"이 아니라 "측정 안 됨"으로 처리해야 부당한 페널티 안 줌
+    const hasSatisfaction = satRows[0]?.avg_score != null;
+    const satisfactionAvg = hasSatisfaction ? parseFloat(satRows[0].avg_score) : 0;
 
     // score = AI해결률(40%) + 부정감정 비율 역수(30%) + 만족도(30%)
+    // 만족도 데이터 없으면 70점 만점으로 가중 합산 후 100점 환산 (부당 페널티 제거)
     const aiResolveRate = totalCases > 0 ? aiResolved / totalCases : 0;
     const negativeRate = totalCases > 0 ? negativeEmotions / totalCases : 0;
-    const satisfactionRate = satisfactionAvg / 5; // 0~1 (5점 만점 기준)
+    const satisfactionRate = satisfactionAvg / 5;
 
-    const score = Math.round(
-      (aiResolveRate * 40) +
-      ((1 - negativeRate) * 30) +
-      (satisfactionRate * 30)
-    );
+    const score = hasSatisfaction
+      ? Math.round((aiResolveRate * 40) + ((1 - negativeRate) * 30) + (satisfactionRate * 30))
+      : Math.round(((aiResolveRate * 40) + ((1 - negativeRate) * 30)) * 100 / 70);
 
     // 3. AI에 넘길 텍스트 구성 (통계 + summary)
     const statsText = [
