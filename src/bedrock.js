@@ -298,6 +298,18 @@ const supervisorNode = async (state) => {
     }
   }
 
+  // 역보정: LLM이 신규 예약을 escalate로 잘못 분류한 경우 → store + action으로 강제
+  // "예약할게/예약할래/예약하고 싶어" 같은 신규 예약 의사는 변경/취소 어근이 없으면 store
+  if ((sc === '병원' || sc === '식당') && intent === 'escalate') {
+    const hasChangeOrCancel = q.match(/변경|취소|바꿔|바꾸|바꿀|바꿈|미루|미룸|연기|미뤄/);
+    const hasNewReservationIntent = q.match(/예약/) && q.match(/할래|할게|하자|하고\s*싶|해줘|해주세요|잡아|잡고\s*싶|원해|원합니|할거|하려/);
+    if (hasNewReservationIntent && !hasChangeOrCancel) {
+      console.log(`   └─ 🔄 신규 예약 의사 → store/action으로 보정 (was: escalate)`);
+      intent = 'store';
+      reservationType = 'action';
+    }
+  }
+
   // "예약" 키워드 처리 — 규정/절차 질문이면 rag, 본인 데이터면 api, 나머지는 store
   // escalate(예약 변경/취소 처리 요청)는 supervisor LLM이 이미 분류한 것 → 덮어쓰지 말 것
   if (q.match(/예약/) && intent !== 'rag' && intent !== 'escalate') {
