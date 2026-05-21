@@ -460,9 +460,12 @@ const supervisorNode = async (state) => {
     const hasReservationContextOnly = !!q.match(/빈\s*(자리|시간)|비어\s*있/);  // 예약 없이도 예약 의미 분명한 표현
     const isReservationQuery = hasExplicitReservation || hasReservationContextOnly;
     if (isReservationQuery) {
-      if (!reservationType) {
-        const actionVerbs = /할래|할게|하자|하고\s*싶|해줘|해주세요|잡아|잡고\s*싶/;
-        reservationType = actionVerbs.test(q) ? 'action' : 'inquiry';
+      const actionVerbs = /할래|할게|하자|하고\s*싶|해줘|해주세요|잡아|잡고\s*싶|원해|원합니|할거|하려|하려고|받아\s*줘|넣어\s*줘/;
+      // 명확한 행동 동사가 있으면 LLM 분류보다 우선해서 action 강제
+      if (actionVerbs.test(q)) {
+        reservationType = 'action';
+      } else if (!reservationType) {
+        reservationType = 'inquiry';
       }
     } else {
       reservationType = null;
