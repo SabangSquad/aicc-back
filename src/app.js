@@ -65,7 +65,7 @@ app.use(session({
     secure: process.env.NODE_ENV === 'production',
     httpOnly: true,
     sameSite: 'lax',
-    maxAge: 30 * 60 * 1000  // 30분 후 만료
+    maxAge: 8 * 60 * 60 * 1000 // 8시간 후 만료 // 30 * 60 * 1000  // 30분 후 만료
   },
 }));
 
