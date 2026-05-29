@@ -1511,6 +1511,14 @@ const composerNode = async (state) => {
     .replace(/고객\s*센터에서\s*안내/g, '매장 사장님께 문의')
     .trim();
 
+  // Echo 방어: 데이터에 답할 근거가 없을 때 8B 모델이 질문을 그대로 복창하는 degeneration 발생.
+  // 공백·끝맺음 부호 제거 후 질문과 동일하면(또는 빈 답이면) 안전 문구로 치환.
+  const normalizeEcho = (s) => s.replace(/\s+/g, '').replace(/[?？!！.。…\s]+$/g, '');
+  if (!finalAnswer || normalizeEcho(finalAnswer) === normalizeEcho(state.userQuery)) {
+    console.log(`   └─ ⚠️ [Echo 감지] 질문 복창/빈 답 → 안전 응답으로 치환`);
+    finalAnswer = '죄송합니다. 해당 정보는 제공해 드리기 어렵습니다. 자세한 내용은 매장 사장님께 문의 부탁드립니다.';
+  }
+
   return {
     finalAnswer,
     suggestedQuestions: [],
