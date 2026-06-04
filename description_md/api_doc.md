@@ -59,9 +59,10 @@
 | GET    | `/stores/{store_id}/manuals`             | 가게 매뉴얼 조회      | `category`, `page`, `limit`              |
 | POST   | `/stores/{store_id}/manuals`             | 매뉴얼 추가           |                                |
 | PATCH  | `/stores/{store_id}/manuals/{manual_id}` | 매뉴얼 수정           |                                |
+| DELETE | `/stores/{store_id}/manuals/{manual_id}` | 매뉴얼 삭제           | isStoreOwner 필요              |
 | GET    | `/stores/{store_id}/products`            | 가게 상품 조회        | `page`, `limit`                |
 | POST   | `/stores/{store_id}/products`            | 상품 추가             |                                |
-| GET    | `/stores/{store_id}/solutions`           | 상담 솔루션 분석      | hours (1~24, 기본 24)          |
+| GET    | `/stores/{store_id}/solutions`           | 상담 솔루션 분석      | hours (1~24, 기본 24). 만족도 없으면 70점 만점 → 100점 환산 |
 
 ---
 
@@ -122,6 +123,7 @@
 | ------ | -------------------------- | -------------- | --------- |
 | GET    | `/products/{product_id}` | 상품 단건 조회 |           |
 | PATCH  | `/products/{product_id}` | 상품 정보 수정 |           |
+| DELETE | `/products/{product_id}` | 상품 삭제      | 해당 가게 OWNER/ADMIN/내부 시크릿만. FK 위반(주문 참조 중) → 409 |
 
 ---
 

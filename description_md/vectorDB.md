@@ -9,38 +9,47 @@
 ## 아키텍처
 
 ```
-[매뉴얼 저장]
-POST /stores/:store_id/manuals { title, category, content }
+[매뉴얼 저장 / 수정 / 삭제]
+POST   /stores/:store_id/manuals             { title, category, content }
+PATCH  /stores/:store_id/manuals/:manual_id  (content 변경 시 임베딩 재생성)
+DELETE /stores/:store_id/manuals/:manual_id  (isStoreOwner)
   ↓
-src/routes/stores.js POST "/:store_id/manuals"
+src/routes/stores.js
   ├─ content → src/services/embeddingService.js generateEmbedding()
   │            → Bedrock Titan Embed v2 → 1024차원 벡터 생성
-  └─ INSERT INTO manuals (..., embedding) → pgvector에 저장
+  └─ INSERT / UPDATE / DELETE manuals → pgvector
 
-[RAG 검색 — 고객 질문 시]
+[RAG 검색 — 고객 질문 시 두 경로]
+
+A) ragNode (정책 단독 질문)
 POST /chats { message, store_id }
+  → supervisorNode → intent='rag' → ragNode
+  → retrieveKB(query, storeId)              # categoryHint 없음
+  → findSimilarContext(query, storeId, null)
+    SELECT content FROM manuals
+    WHERE store_id = $2
+    ORDER BY embedding <=> $1 LIMIT 2
+  → 유사도 top 2 매뉴얼 → ragAgent 프롬프트
+
+B) apiNode (본인 데이터 + 정책 결합 질문) — "주문 320 환불 가능?" 류
+  → supervisorNode → intent='api' (명시 ID + 정책 질문 강제 룰)
+  → apiNode가 본인 주문/예약/cases prefetch
+  → 정책 질문 감지 (환불/취소/교환/변경 + 가능 여부)
+    └─ categoryHint 매핑:
+        병원/식당: 예약변경 / 예약취소 / 예약확인
+        이커머스: 환불 / 교환 / 취소 (반품→환불)
+  → retrieveKB(query, storeId, categoryHint)
+  → findSimilarContext(query, storeId, categoryHint)
+    categoryHint 있음: 카테고리 우선 정렬 + LIMIT 1
+    categoryHint 없음: 임베딩 거리만으로 LIMIT 2
+  → 결과를 [참고 매뉴얼] 라벨로 sourceData 맨 앞에 prepend
+    (composer source_data truncate가 앞 보존이라 매뉴얼 우선 살림)
+  → 매뉴얼 0건 + categoryHint 있음 → [참고 매뉴얼 안내]: 이 매장에
+    [{categoryHint}] 정책 매뉴얼이 등록되어 있지 않습니다... 명시 추가
+  → composer가 본인 상태 × 매뉴얼 조건 결합해서 가능/불가 단정
+
   ↓
-src/routes/chat.js → processAICC()
-  ↓
-src/bedrock.js → supervisorNode → intent='rag' → ragNode
-  ↓
-src/bedrock.js retrieveKB(query, storeId)
-  ↓
-src/services/searchService.js → findSimilarContext(query, storeId)
-  ├─ 고객 질문 → src/services/searchService.js getQuestionVector()
-  │              → Bedrock Titan → 1024차원 벡터 변환
-  └─ SELECT content FROM manuals
-     WHERE store_id = $2
-     ORDER BY embedding <=> $1 LIMIT 2
-  ↓
-유사도 top 2 매뉴얼 content 반환
-  ↓
-src/bedrock.js ragNode → invokePrompt(BEDROCK_RAG_ARN, { user_query, retrieved_context })
-RAG 프롬프트: "다음 규정을 참고하여 답변하세요: {context}"
-  ↓
-src/bedrock.js composerNode → 최종 답변 + 추천 질문 생성
-  ↓
-AI 답변 생성
+src/bedrock.js composerNode → 본인 데이터 + 매뉴얼 결합 답변
 ```
 
 ---
@@ -110,6 +119,7 @@ embedding vector(1024)  -- pgvector 확장 사용
 |------|------|------|
 | 매뉴얼 생성 | stores.js `POST /stores/:store_id/manuals` | content → 임베딩 → INSERT |
 | 매뉴얼 수정 | stores.js `PATCH /stores/:store_id/manuals/:manual_id` | content 변경 시 → 임베딩 재생성 → UPDATE |
+| 매뉴얼 삭제 | stores.js `DELETE /stores/:store_id/manuals/:manual_id` | isStoreOwner — DELETE FROM manuals |
 | 기존 데이터 일괄 | src/scripts/embed-manuals.js | embedding IS NULL인 행 전부 벡터화 |
 
 ---
@@ -119,15 +129,40 @@ embedding vector(1024)  -- pgvector 확장 사용
 ### 파일: src/services/searchService.js
 
 ```js
-export async function findSimilarContext(query, storeId) {
-  const vector = await getQuestionVector(query);  // 질문 → 벡터
-  const sql = `
-    SELECT content FROM manuals
-    WHERE store_id = $2
-    ORDER BY embedding <=> $1 LIMIT 2   -- 코사인 유사도 검색
-  `;
-  const res = await client.query(sql, [toSql(vector), storeId]);
-  return res.rows.map(row => row.content).join('\n\n');
+// categoryHint: 정책 키워드 기반 카테고리 우선 정렬 (예: "예약변경", "환불", "교환")
+export async function findSimilarContext(query, storeId, categoryHint = null) {
+  const vector = await generateEmbedding(query);
+
+  const sql = categoryHint
+    ? `
+      SELECT manual_id, title, category, content, embedding <=> $1 AS distance
+      FROM manuals
+      WHERE store_id = $2
+      ORDER BY
+        CASE WHEN category = $3 THEN 0 ELSE 1 END,  -- 일치하는 카테고리 우선
+        embedding <=> $1                             -- 그 다음 임베딩 거리
+      LIMIT 1
+    `
+    : `
+      SELECT manual_id, title, category, content, embedding <=> $1 AS distance
+      FROM manuals
+      WHERE store_id = $2
+      ORDER BY embedding <=> $1 LIMIT 2
+    `;
+
+  const res = await client.query(sql, categoryHint ? [toSql(vector), storeId, categoryHint] : [toSql(vector), storeId]);
+
+  const context = res.rows.map(r => r.content).join('\n\n');
+  const sources = res.rows.map(r => ({
+    type: 'manual',
+    manualId: r.manual_id,
+    title: r.title,
+    category: r.category,
+    distance: parseFloat(r.distance),
+    score: Number((1 - parseFloat(r.distance)).toFixed(3)),  // 0~1, 1에 가까울수록 유사
+    excerpt: typeof r.content === 'string' ? r.content.slice(0, 120) : '',
+  }));
+  return { context, sources };
 }
 ```
 
@@ -135,7 +170,10 @@ export async function findSimilarContext(query, storeId) {
 
 - **필터**: `store_id` — 해당 가게의 매뉴얼만 검색 (다른 가게 정보 혼입 방지)
 - **정렬**: `embedding <=> $1` — pgvector의 코사인 거리 연산자 (값이 작을수록 유사)
-- **상위 2개** 문서의 content를 합쳐서 반환
+- **categoryHint 있을 때**: 카테고리 일치 매뉴얼 1건 우선, 없으면 임베딩 거리 best 1건 (LIMIT 1)
+- **categoryHint 없을 때**: 임베딩 거리 top 2 (모호성 보험, LIMIT 2)
+- 반환 구조: `{ context: string, sources: [{ manualId, title, category, distance, score, excerpt }] }`
+  → sources는 응답의 `explanation.sources`에 그대로 노출 (RAG 근거 투명성)
 
 ### 검색이 어떻게 작동하는가 (구체적 예시)
 
@@ -182,34 +220,68 @@ manual_id=4  "교환 규정"        → 벡터 D [0.02, -0.02, ...]
     → SQL: SELECT content FROM manuals WHERE store_id=1 ORDER BY embedding <=> Q LIMIT 2
     → 결과: "# 에브리샵 환불 규정\n환불은 7일 이내..." + "# 에브리샵 교환 규정\n..."
   ↓
-[4단계] src/bedrock.js ragNode → invokePrompt(BEDROCK_RAG_ARN, {...})
-  invokePrompt(BEDROCK_RAG_ARN, {
+[4단계] src/bedrock.js ragNode → invokePrompt("ragAgent", {...})
+  invokePrompt("ragAgent", {
     user_query: "환불 규정 알려주세요",
-    retrieved_context: "# 에브리샵 환불 규정\n환불은 7일 이내..."  ← 벡터 검색 결과
+    retrieved_context: "# 에브리샵 환불 규정\n환불은 7일 이내...",  ← 벡터 검색 결과
+    history: "..." // 일반 정책 질문이면 비움 (본인 데이터 섞임 방지)
   })
 
-  프롬프트 내부:
-  ┌────────────────────────────────────────────────┐
-  │ 다음 규정을 참고하여 고객의 질문에 답변하세요.  │
-  │                                                │
-  │ [규정/매뉴얼]                                   │
-  │ # 에브리샵 환불 규정                            │
-  │ 환불은 상품 수령 후 7일 이내 신청 가능...        │
-  │                                                │
-  │ [고객 질문]                                     │
-  │ 환불 규정 알려주세요                            │
-  └────────────────────────────────────────────────┘
+  ragAgent 프롬프트 핵심:
+  - [규정]에 없는 수치/기간/날짜/조건/절차 만들거나 추측 금지
+  - 정책 답변 시 핵심 조건 빠짐없이 인용:
+    · 시점/마감 (예: "전날 오후 6시까지")
+    · 비용/수수료 (예: "30% 수수료 부과")
+    · 예외/면제 조건
+    · 접수 방법/절차
+  - [규정] 부족 시 정확히 다음만 출력:
+    "이 매장에 해당 정책이 등록되어 있지 않습니다. 매장 사장님께 직접 문의해 주세요."
+    (구버전 "고객센터로 문의"는 이 챗봇 자체가 매장 상담창이라 모순 → 매장 사장 문의로 변경)
   ↓
-  AI(Nova)가 매뉴얼을 읽고 답변 생성
+  vLLM Qwen3-8B-AWQ가 매뉴얼을 읽고 답변 생성
   ↓
-[5단계] src/bedrock.js composerNode → 최종 답변 + 추천 질문 구성
+[5단계] src/bedrock.js composerNode → 최종 답변 구성 + post-process
+  - "고객센터로 문의" / "콜센터 문의" / "고객센터에서 안내" → "매장 사장님께 문의" 강제 치환
   ↓
 고객에게 반환:
 {
   answer: "환불은 상품 수령 후 7일 이내 신청 가능하며, 미개봉·미사용 상태여야 합니다.
            고객 변심 시 왕복 배송비 6,000원이 차감됩니다.",
-  suggestions: ["교환 절차도 알려주세요", "배송비는 얼마인가요?", "반품 접수 방법이 궁금해요"]
+  explanation: {
+    answerType: "manual_rag",
+    sources: [{ manualId: 3, title: "환불 규정", category: "환불", score: 0.95 }]
+  }
 }
+```
+
+### 본인 데이터 + 정책 결합 답변 (apiNode 경로)
+
+"주문 320 환불 가능?" 류 질문은 supervisor가 api로 라우팅 (명시 ID + 정책 질문).
+
+```
+apiNode
+  ├─ cases/orders/customers prefetch → 주문 320 상태 "준비"
+  └─ 정책 질문 감지 → retrieveKB(q, storeId, '환불')
+       └─ "# 에브리샵 환불 규정\n환불은 수령 후 7일 이내..."
+
+accumulatedContext (composer에 전달):
+  [참고 매뉴얼]: # 에브리샵 환불 규정 ...           ← 앞에 prepend
+  [참고 데이터 0회차]: 주문 320 (상태: 준비, ...)
+
+composer 룰 5 (결합 판단):
+  · 본인 상태 = "준비" (발송 전)
+  · 매뉴얼 = "발송 전 전액 환불"
+  → "주문 320은 '준비' 상태(발송 전)라 매장 정책상 환불 가능합니다.
+     마이페이지에서 환불 신청 진행해 주세요."
+```
+
+매뉴얼 0건일 때:
+```
+[참고 매뉴얼 안내]: 이 매장에 [환불] 정책 매뉴얼이 등록되어 있지 않습니다.
+사장님께 직접 문의가 필요한 사안임을 사용자에게 친절히 안내하세요.
+
+→ composer: "주문 320은 '준비' 상태입니다. 이 매장에 환불 정책이
+   등록되어 있지 않아 정확한 답변이 어렵습니다. 매장 사장님께 직접 문의해 주세요."
 ```
 
 ### 핵심 포인트

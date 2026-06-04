@@ -1,7 +1,16 @@
 # AICC-Back 코드베이스 분석 보고서
 
-> 분석일: 2026-04-01
+> 분석일: 2026-04-01 (초안), 최종 수정: 2026-05-19
 > 대상 경로: `c:\Users\ChupopChoos\aicc-back`
+
+> ⚠️ **주요 변경 사항 (2026-04 → 05)**
+> - **AI/LLM**: AWS Bedrock(Claude) → **vLLM 자체 호스팅 (Qwen3-8B-AWQ)** (컨텍스트 3072 토큰)
+> - 프롬프트 단일 소스: `src/prompts/templates.js` (ARN/Prompt Management 의존성 제거)
+> - 본인 데이터 + 매뉴얼 결합 답변 (apiNode categoryHint + composer 룰 5)
+> - 회피 멘트 변경: "고객센터" → "매장 사장님" (post-process 자동 치환)
+> - 매뉴얼/상품 DELETE 엔드포인트 추가
+> - 솔루션 score 만족도 없을 때 70점 만점 → 100점 환산
+> - 정성 평가 도구 (scripts/eval-export.js, eval-solutions.js) — 4.275/5 (85.5%)
 
 ---
 
@@ -17,13 +26,13 @@ AICC-Back은 **AI 기반 컨택센터(AI Contact Center) 백엔드**다.
 | 런타임 | Node.js (ES6 모듈) |
 | 웹 프레임워크 | Express 5.1.0 |
 | 데이터베이스 | PostgreSQL + pgvector |
-| AI/LLM | AWS Bedrock (Prompt Management, Claude) |
-| 임베딩 | Amazon Titan Embed Text v2 (1024차원) |
+| AI/LLM | **vLLM 자체 호스팅 (Qwen3-8B-AWQ)** — 컨텍스트 3072 토큰 |
+| 임베딩 | Amazon Titan Embed Text v2 (1024차원) — 매뉴얼 임베딩 전용 |
 | AI 오케스트레이션 | LangGraph (상태 머신 + PostgreSQL 체크포인터) |
-| 인증 | Google OAuth 2.0 + Passport.js + express-session |
-| 보안 | Rate Limiting (express-rate-limit), Bedrock Guardrail |
+| 인증 | Google OAuth 2.0 + Passport.js + express-session (Redis 스토어) |
+| 보안 | Rate Limiting (express-rate-limit), regex+LLM 가드레일 |
 | API 문서 | Swagger / OpenAPI 3.0 |
-| 인프라 | Docker, Docker Compose, Nginx |
+| 인프라 | Docker, K8s (aicc 네임스페이스), Nginx |
 
 ---
 

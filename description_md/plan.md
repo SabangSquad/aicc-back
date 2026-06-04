@@ -9,6 +9,8 @@
 
 ### 완료
 
+#### 초기 구현 (2026-03 ~ 04)
+
 | 항목 | 설명 |
 |------|------|
 | 인증 시스템 개편 | passport.js (ADMIN/OWNER/CUSTOMER), auth.js (isOwner, isCustomerOrOwner) |
@@ -20,22 +22,44 @@
 | Swagger 갱신 | chat.js /chats 경로, summary, store_id, close 엔드포인트 반영 |
 | 채팅 세션 관리 | 세션 기반 caseId 유지, 종료/AI자동해결 감지, 비로그인→로그인 customer_id 연결 |
 | emotion 유효성 검증 | cases.js PATCH에서 평온/기쁨/슬픔/화남/짜증만 허용 |
-| api_doc.md 반영 | POST /chats/{case_id}/close 엔드포인트 추가 |
+| DB 스키마 마이그레이션 | stores/satisfactions/manuals/shipments/reservations 등 신규 테이블 |
+| 레거시 파일 삭제 | agents.js, order_items.js, assignAgent.js 제거 |
+| bedrock.js API 에이전트 갱신 | memo→summary, 경로 반영 |
+| searchService.js manuals 전환 | aicc_knowledge → manuals 벡터 검색 |
+| store 컨텍스트 AI 전달 | processAICC에 storeId 전달, 가게별 매뉴얼 검색 |
+| store 소유권 검증 | isStoreOwner — OWNER는 자기 가게만 |
+| 임베딩 파이프라인 | manuals 기반 벡터 재구축 |
+| 상담사 에스컬레이션 | escalateNode + AI 요약/추천답변 |
+| 상담 자동 카테고리 분류 | caseWriter가 종료 시 cases.category 자동 설정 |
 
-### 미완료
+#### 멀티 에이전트 + 품질 개선 (2026-04 ~ 05)
+
+| 항목 | 설명 |
+|------|------|
+| AWS Bedrock → vLLM 전환 | Qwen3-8B-AWQ 자체 호스팅, ARN 의존성 제거 |
+| 프롬프트 단일 소스 | src/prompts/templates.js로 일원화 |
+| LangGraph 워크플로우 | guardrail+memory 병렬 → supervisor → api/rag/store/escalate → composer |
+| Truncate 유틸 | ContextOverflow 방지 — 모든 LLM 호출 입력 자동 자르기 |
+| 답변 근거 노출 | RAG sources + decisionTrace + API dataSources |
+| 매장 품질 score | AI해결률 + 부정감정 + 만족도 — **만족도 없으면 70점 만점 → 100점 환산** |
+| 솔루션 분석 | analyzeSolutions (headline + issues + strategies + urgency) |
+| 가게별 카테고리 매뉴얼 | retrieveKB에 categoryHint 파라미터 (정책 답변 정확도) |
+| **본인 데이터 + 매뉴얼 결합** | apiNode가 정책 질문 시 매뉴얼 prepend → composer 결합 단정 답변 |
+| **회피 멘트 변경** | "고객센터 문의" → "매장 사장님께 문의" (이 챗봇 자체가 매장 상담창) |
+| **요일 표현 보정** | supervisor 후처리 — "금요일" → JS로 KST 기준 미래 같은 요일 계산 |
+| **매뉴얼/상품 DELETE** | DELETE /stores/:id/manuals/:id + DELETE /products/:id |
+| **정성 평가 도구** | scripts/eval-export.js, eval-solutions.js (랜덤 매장, case_id 명시 모드, 자동 DB UPDATE) |
+| api_doc.md 반영 | POST /chats/{case_id}/close + 매뉴얼/상품 DELETE 추가 |
+
+### 미완료 / 향후 개선
 
 | 우선순위 | 항목 | 설명 |
 |----------|------|------|
-| P0 | DB 스키마 마이그레이션 | 신규 테이블 생성 + 기존 테이블 변경 |
-| P0 | 레거시 파일 삭제 | agents.js, order_items.js, assignAgent.js |
-| P0 | bedrock.js API 에이전트 갱신 | memo→summary, 변경된 경로 반영 |
-| P1 | searchService.js manuals 전환 | aicc_knowledge → manuals 기반 벡터 검색 |
-| P1 | store 컨텍스트 AI 전달 | processAICC에 storeId 전달, 가게별 매뉴얼 검색 |
-| P1 | store 소유권 검증 | OWNER가 자기 가게만 접근하도록 store_id 검증 |
-| P2 | 임베딩 파이프라인 | manuals 기반 벡터 재구축 (aicc_knowledge 대체) |
-| P2 | 상담사 에스컬레이션 | AI 미해결 시 상담사(OWNER) 전환 메커니즘 |
-| P2 | 상담 자동 카테고리 분류 | 첫 메시지 분석으로 cases.category 자동 설정 |
-| P3 | 꼬리 질문 + 맥락 유지 | bedrock.js closer 노드, 이전 케이스 요약 전달 |
+| P2 | 꼬리 질문 + 맥락 유지 | 이전 케이스 요약 전달 (현재 단일 케이스 내 memory만) |
+| P2 | Dynamic Few-shot | 과거 cases 임베딩 → 유사 상담 예시를 composer에 주입 |
+| P2 | 알림 시스템 | escalate 후 고객에게 상담사 답변 도착 알림 (현재 polling) |
+| P3 | 매뉴얼 카테고리 자유화 | 현재 업종별 고정 → 매장 자율 카테고리 등록 |
+| P3 | cases.suggested_reply 영속화 | 현재 cases 테이블에 컬럼 없어 caseWriter 재호출 필요 |
 
 ---
 

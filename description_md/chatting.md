@@ -173,25 +173,45 @@ guardrail + memory (병렬) → supervisor → api/rag/store → composer → EN
                                        → unsupported → END (업종 미지원)
 ```
 
-- guardrail: `src/bedrock.js` guardrailNode — Bedrock Guardrail API 호출
-- memory: `src/bedrock.js` memoryLoaderNode — DB에서 최근 5개 메시지 로드 + 요약
-- supervisor: `src/bedrock.js` supervisorNode — intent 분류 + 코드 후처리 (업종 체크, 인사 감지, 예약/store 보정, reservation_type 판정)
-- rag: `src/bedrock.js` ragNode → `src/services/searchService.js` findSimilarContext()
-- api: `src/bedrock.js` apiNode → 내부 REST API 호출 (axios). 비로그인 시 `login_required`
+- guardrail: `src/bedrock.js` guardrailNode — **regex shortcut 우선**, 실패 시 LLM 호출 (vLLM Qwen3-8B-AWQ)
+- memory: `src/bedrock.js` memoryLoaderNode — DB에서 최근 10개 메시지 로드 + 요약 (0개 skip / 1~3개 raw / 4~10개 LLM)
+- supervisor: `src/bedrock.js` supervisorNode — intent 분류 + **JS 후처리 룰 (요일 표현 보정, 정책 결합 등)**
+- rag: `src/bedrock.js` ragNode → `findSimilarContext(query, storeId)` 매뉴얼 top-2
+- api: `src/bedrock.js` apiNode → 내부 REST API 호출 + **정책 질문이면 categoryHint 기반 매뉴얼 추가 검색 + sourceData 맨 앞 prepend**
 - store: `src/bedrock.js` storeNode → GET /stores/:store_id + 예약 현황/상품 목록 추가 조회. 예약 action + 로그인 시 `showReservationForm: true` + `availableSlots`, action + 비로그인 시 `login_required`(가능 시간 참고 포함), inquiry는 텍스트 안내만
 - greeting: supervisor에서 sourceData 직접 설정 → rag 건너뛰고 composer로
 - escalate: `src/bedrock.js` escalateNode — AI 분석(요약/감정/추천답변) + status='대기'
 - unsupported: supervisor에서 업종 미지원 감지 → 바로 END
-- composer: `src/bedrock.js` composerNode — 최종 답변 + 추천 질문 생성
+- composer: `src/bedrock.js` composerNode — **본인 데이터 + 매뉴얼 결합 답변** + post-process (회피 멘트 치환, _note 제거)
 
 #### supervisor 코드 후처리 순서 (`src/bedrock.js` supervisorNode)
 1. 업종별 미지원 체크 (이커머스+예약, 병원+환불 등) → unsupported
-2. "예약" 키워드 → 규정 질문이면 rag, 내 예약 조회면 api, 나머지는 store
-3. rag인데 인사면 → greeting (composer로 직접)
-4. rag인데 규정 질문 아니면 → store로 전환
-5. escalate + 비로그인 → login_required
-6. 알 수 없는 intent → rag로 기본
-7. reservation_type 확정 (intent === store 일 때): Supervisor가 준 값 우선, 없으면 행동 동사(할래/할게/하고 싶어/해줘/잡아/잡고 싶어) 정규식으로 inquiry/action 판정
+2. 예약 변경/취소 + 행동 동사 → escalate 강제 (병원/식당)
+3. "예약" 키워드 → 규정 질문이면 rag, 내 예약 조회면 api, 나머지는 store
+4. **환불/교환/취소/변경 정책 질문** → rag (단, 명시 ID + 본인 ID 있으면 api로 — apiNode가 매뉴얼 함께 fetch)
+5. **후속 정책 질문 (수수료/요금 + memory에 정책 토픽 흔적)** → rag 강제
+6. **명시 ID(상담/주문/예약 N) + 본인 의도** → api 강제 (escalate는 보존)
+7. **본인 예약 조회 패턴** ("예약된 거", "예약 확인", "예약 잡혀 있") → api
+8. **가게 카탈로그 가격/메뉴** → store
+9. rag인데 인사면 → greeting (composer로 직접)
+10. rag인데 규정 질문 아니면 → store로 전환
+11. escalate + 비로그인 → login_required
+12. **요일 표현 ("금요일")** → JS로 KST 기준 미래 같은 요일 계산해서 date_start/date_end 덮어쓰기
+13. reservation_type 확정 (store 분류일 때)
+
+#### apiNode 정책 결합 (본인 데이터 + 매뉴얼)
+- 환불/교환/취소/변경 + 가능 여부 질문 감지 시 `retrieveKB(q, storeId, categoryHint)` 호출
+- categoryHint 매핑:
+  - 병원/식당: "예약 변경" → 예약변경, "예약 취소" → 예약취소, "예약 확인" → 예약확인
+  - 이커머스: "환불" → 환불, "교환" → 교환, "취소/변경" → 취소, "반품" → 환불
+- **매뉴얼 fetch 성공** → `[참고 매뉴얼]: ...` 라벨로 accumulatedContext **맨 앞에 prepend** (composer source_data truncate 앞 보존이라 매뉴얼 우선 살림)
+- **매뉴얼 0건 + categoryHint 있음** → `[참고 매뉴얼 안내]: 이 매장에 [{categoryHint}] 정책 매뉴얼이 등록되어 있지 않습니다. 사장님께 직접 문의가 필요한 사안임을 사용자에게 친절히 안내하세요.` 명시 추가
+
+#### composer post-process
+- `_note`/회차 라벨 제거 (내부 hint 노출 차단)
+- showReservationForm=false인데 LLM이 "채팅창에서 바로 예약" 문구 → 강제 제거
+- "개인정보 보호로 제공 불가" 류 환각 → 강제 제거
+- **"고객센터로 문의" → "매장 사장님께 문의"** 강제 치환 (콜센터/고객센터에서 안내 variant 포함)
 
 #### SSE 응답 타입
 | type | 의미 | 발생 조건 |

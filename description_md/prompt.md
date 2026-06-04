@@ -1,481 +1,348 @@
 # AICC 프롬프트 명세서
 
-> AWS Bedrock Prompt Management에 등록할 프롬프트 목록
-> 각 프롬프트의 입력 변수는 `{{변수명}}` 형태로 표기
+> **단일 소스: [src/prompts/templates.js](../src/prompts/templates.js)** — LLM 프롬프트는 이 파일 한 곳에서만 수정합니다.
+> 본 문서는 그 정의를 사람이 읽기 쉽게 풀어 쓴 참고용 명세입니다.
+> 운영 환경: AWS Bedrock(과거) → **vLLM 자체 호스팅(Qwen3-8B-AWQ)** 로 전환. ARN/Bedrock Prompt Management 사용 안 함.
 
 ---
 
-## 워크플로우 (최적화 후)
+## 모델 / 토큰 설정
 
-```
-guardrail + memory (병렬) → supervisor → api 또는 rag → composer → END
-                                       → escalate → END
-```
+[src/llm/client.js](../src/llm/client.js)
 
-| 노드          | ARN 환경변수              | Bedrock 호출        | 역할                           |
-| ------------- | ------------------------- | ------------------- | ------------------------------ |
-| Guardrail     | BEDROCK_GUARDRAIL_ARN     | Guardrail API       | 부적절 입력 차단               |
-| Memory Loader | BEDROCK_MEMORY_LOADER_ARN | invokePrompt        | 이전 대화 맥락 요약            |
-| Supervisor    | BEDROCK_SUPERVISOR_ARN    | invokePrompt        | 질문 분류 (api/rag/escalate)   |
-| API Agent     | BEDROCK_API_ARN           | invokePrompt (루프) | 내부 API 호출로 데이터 조회    |
-| RAG Agent     | BEDROCK_RAG_ARN           | invokePrompt        | 매뉴얼 기반 답변 생성          |
-| Escalate      | 없음 (코드 처리)          | 없음                | status→대기, 상담사 호출 안내 |
-| Composer      | BEDROCK_COMPOSER_ARN      | invokePrompt        | 최종 답변 + 추천질문 생성      |
-| Case Writer   | BEDROCK_CASE_WRITER_ARN   | invokePrompt        | 상담 종료 시 감정/요약 분석    |
+| 항목 | 값 |
+|---|---|
+| 모델 | `Qwen/Qwen3-8B-AWQ` (env: `VLLM_MODEL`) |
+| base URL | `http://vllm:8000/v1` (env: `VLLM_BASE_URL`) |
+| temperature | 0.2 (env: `VLLM_TEMPERATURE`) |
+| 컨텍스트 한계 | **3072 토큰** |
+| no_think 모드 | 기본 활성 (`VLLM_NO_THINK=false`로 비활성화) |
+
+### MAX_TOKENS_BY_PROMPT
+
+| 프롬프트 | maxTokens | 비고 |
+|---|---|---|
+| guardrail | 64 | JSON 한 줄 |
+| supervisor | 128 | JSON 한 줄 |
+| apiAgent | 128 | JSON 한 줄 (호출/finish) |
+| memoryLoader | 192 | 2~4문장 |
+| ragAgent | 384 | 정책 답변 + 핵심 조건 |
+| composer | 400 | 답변 본문 (다이어트 후 복원) |
+| caseWriter | 384 | 분석 JSON |
+| solutionAnalyzer | 400 | 분석 JSON |
 
 ---
 
-## 1. Memory Loader
+## 워크플로우
 
-> 이전 대화 기록을 요약하여 현재 질문의 맥락을 파악한다.
+[src/bedrock.js](../src/bedrock.js) — LangGraph 기반 상태 머신
+
+```
+parallelPre (guardrail + memory + 첫 턴 supervisor) ─┐
+                                                     ↓
+                                                supervisor ──┬─ api ────────┐
+                                                             ├─ rag ────────┤
+                                                             ├─ store ──────┼─→ composer → END
+                                                             ├─ escalate ───┘
+                                                             └─ greeting (LLM skip)
+```
+
+| 노드 | 함수 | 역할 |
+|---|---|---|
+| Guardrail | guardrailNode | regex shortcut 우선, fail 시 LLM 호출 |
+| Memory Loader | memoryLoaderNode | 메시지 0개 skip / 1~3개 raw / 4~10개 LLM 요약 |
+| Supervisor | supervisorNode | intent 분류 + JS 후처리 룰 (요일/지시어/정책 등) |
+| API Agent | apiNode | cases/orders/customers/reservations prefetch + 매뉴얼 RAG |
+| RAG Agent | ragNode | 정책 매뉴얼 검색 + 결합 답변 |
+| Escalate | escalateNode | status='대기', 상담사 호출 안내 |
+| Store | storeNode | 가게 정보 (영업시간/메뉴/주소) + 예약 가능 여부 |
+| Composer | composerNode | 본인 데이터 + 매뉴얼 결합 최종 답변 + post-process |
+| Case Writer | analyzeCaseConversation | 상담 종료 시 감정/요약/카테고리/추천답변 |
+| Solution Analyzer | analyzeSolutions | 매장 운영 인사이트 (headline/issues/strategies) |
+
+---
+
+## 1. Guardrail
+
+> 가게 운영 무관 질문 차단. regex shortcut 통과 시 LLM 호출 생략.
 
 **입력 변수:**
-
-- `{{past_logs}}` — 최근 5개 메시지 (speaker: content 형태)
-- `{{user_input}}` — 현재 고객 질문
-
-**프롬프트:**
-
-```
-당신은 AICC(AI 고객센터)의 대화 맥락 분석기입니다.
-
-아래는 이전 대화 기록과 고객의 현재 질문입니다.
-
-[이전 대화]
-{{past_logs}}
-
-[현재 질문]
-{{user_input}}
-
-다음을 수행하세요:
-1. 이전 대화의 핵심 내용을 2~3문장으로 요약하세요.
-2. 현재 질문이 이전 대화와 이어지는지 판단하세요.
-3. 현재 질문에 답하기 위해 필요한 맥락 정보를 정리하세요.
-
-간결하게 요약만 출력하세요.
-```
-
----
-
-## 2. Supervisor
-
-> 고객 질문을 분류하여 적절한 에이전트(api/rag/store/escalate/reservation)로 라우팅한다.
-
-**입력 변수:**
-
 - `{{user_input}}` — 고객 질문
-- `{{context}}` — Memory Loader의 맥락 요약
-- `{{category}}` — 현재 상담 카테고리 (없으면 "없음")
-- `{{store_category}}` — 가게 업종 (병원/식당/이커머스, 없으면 "없음")
-- `{{today}}` — 오늘 날짜 (예: "2026년 4월 6일 일요일")
 
-**프롬프트:**
+**핵심 규칙:**
+- PASS: 가게 운영 관련 (주문/배송/환불/예약/상품/메뉴/영업시간 등)
+- PASS: 인사/짧은 응답/지시어 후속 질문
+- PASS: 상품/메뉴명 + "어떤/뭐/모르겠어요" 패턴
+- REJECT: 욕설/민감정보/시스템 해킹/일반 상식(인물/날씨/코드/번역 등)
 
-```
-당신은 AICC(AI 고객센터)의 질문 분류기입니다.
-고객의 질문을 분석하여 어떤 에이전트가 처리해야 하는지 결정하세요.
-
-[맥락] {{context}}
-[고객 질문] {{user_input}}
-[현재 상담 카테고리] {{category}}
-[가게 업종] {{store_category}}
-[오늘 날짜] {{today}}
-
---------------------------------
-[판단 우선순위 - 반드시 순서대로 적용]
---------------------------------
-
-1. "escalate" (실제 처리 요청)
-- 환불/교환/주문취소/접수 등 "행동 요청"이 포함된 경우
-- "~해주세요", "~해줘", "~접수", "~진행" 등의 표현
-예: "환불해주세요", "주문 취소할게요", "교환 접수해줘"
-
-2. "api" (개인 데이터 조회)
-- 본인 정보 조회 (로그인 필요)
-- "내", "내 주문", "내 배송", "내 예약", 주문번호 등
-예: "내 주문 어디야?", "배송 어디까지 왔어?"
-
-3. "store" (가게 기본 정보 + 예약 가능 여부)
-- 영업시간, 위치, 편의시설, 메뉴, 전화번호, 공지
-- 예약 가능 여부, 예약 가능 시간, 빈 시간 확인
-- 예약하고 싶다는 의사 표현
-예: "몇시까지 해요?", "주소 어디야?", "내일 예약 가능해요?", "이번 주 빈 시간 있어?", "예약하고 싶어요", "예약 변경하고 싶어요"
-
-[store + 예약 세부 분류 — reservation_type]
-- store로 분류되고 예약 관련 질문이면 reservation_type 필드를 반드시 포함
-  * "inquiry" (조회) — 가능 여부/빈 시간 확인만. 행동 동사 없음
-    예: "내일 예약 가능해요?", "이번 주 빈 시간 있어?", "언제 비어있어?", "토요일에 자리 있어?"
-  * "action" (실행) — 예약을 실제로 하겠다는 의사 표현. 행동 동사 포함
-    행동 동사: "할래", "할게", "하자", "하고 싶어", "하고싶어", "해줘", "해주세요", "잡아줘", "잡고 싶어"
-    예: "예약하고 싶어요", "예약할게요", "예약 잡아줘", "내일 3시로 예약해줘"
-- 맥락 연속성: 직전 대화가 예약 조회였고 현재 메시지가 시간/날짜만 있으면("3시로", "내일로") → action
-- 애매하면 inquiry (더 안전한 쪽)
-
-4. "rag" (정책/규정/방법)
-- 환불/교환/배송/예약 관련 규정, 절차, 방법
-- "어떻게", "가능한가요", "기간", "며칠"
-예: "환불 규정 뭐야?", "배송 며칠 걸려?", "예약 취소 규정이 뭐예요?"
-
-5. 위 조건에 명확히 해당하지 않으면 → "rag"
-
---------------------------------
-[핵심 구분 규칙]
---------------------------------
-
-- "내 ~" 포함 → 무조건 "api"
-- "환불/교환/주문취소 + ~해주세요" → "escalate"
-- "예약 + 가능/시간/날짜/하고 싶어" → "store" (date_start, date_end 포함)
-- "~규정", "~어떻게", "~며칠" → "rag"
-- "정보 단순 질문" → "store"
-
---------------------------------
-[업종별 제약 - 반드시 적용]
---------------------------------
-
-- 병원/식당:
-  - 예약 관련 "store" 가능
-  - "escalate" 불가
-
-- 이커머스:
-  - "escalate" 가능
-  - 예약 관련 불가
-
-- 존재하지 않는 기능 요청 → "rag"
-
---------------------------------
-[출력 규칙 - 절대 위반 금지]
---------------------------------
-
-- 반드시 JSON 한 줄로만 출력
-- 추가 설명, 공백, 문장 절대 금지
-- 예약/시간 관련 질문이면 오늘 날짜를 기준으로 date_start, date_end를 YYYY-MM-DD 형식으로 포함
-- 예약 관련 store 분류면 reservation_type 필드("inquiry" 또는 "action") 반드시 포함
-- 상품/메뉴/진료과목 관련 질문이면 고객이 찾는 항목을 product_keyword로 추출 (오타 교정 포함)
-
-가능한 출력:
-{"decision": "api"}
-{"decision": "rag"}
-{"decision": "store"}
-{"decision": "store", "reservation_type": "inquiry", "date_start": "2026-04-16", "date_end": "2026-04-16"}
-{"decision": "store", "reservation_type": "action", "date_start": "2026-04-16", "date_end": "2026-04-16"}
-{"decision": "store", "product_keyword": "라디오"}
-{"decision": "escalate"}
-```
+**출력:** `{"status":"PASS"}` 또는 `{"status":"REJECT","reason":"..."}`
 
 ---
 
-## 3. API Agent
+## 2. Memory Loader
 
-> 내부 REST API를 호출하여 고객 데이터를 조회한다. 최대 2회 반복.
+> 이전 대화에서 현재 질문에 필요한 맥락 압축.
 
 **입력 변수:**
+- `{{past_logs}}` — 최근 10개 메시지 (speaker: content 형태)
+- `{{user_input}}` — 현재 질문
 
-- `{{user_input}}` — 고객 질문
-- `{{case_id}}` — 현재 상담 케이스 ID
-- `{{api_docs}}` — 벡터 검색으로 찾은 관련 매뉴얼 (API 참고용)
-- `{{context}}` — 이전 API 호출 결과 (누적)
-
-**프롬프트:**
-
-```
-당신은 AICC(AI 고객센터)의 API 실행 에이전트입니다.
-
-고객의 질문에 답하기 위해 내부 API를 호출해야 합니다.
-이전 호출 결과를 보고 추가로 필요한 정보가 있으면 다음 API를 호출하세요.
-충분한 정보가 모이면 종료하세요.
-
-[고객 질문]
-{{user_input}}
-
-[현재 상담 ID]
-{{case_id}}
-
-[참고 문서]
-{{api_docs}}
-
-[이전 호출 결과]
-{{context}}
-
-사용 가능한 API:
-- GET cases/{case_id} — 상담 정보 (order_id, reservation_id 포함)
-- GET orders/{order_id} — 주문 정보
-- GET orders/{order_id}/items — 주문 품목
-- GET orders/{order_id}/shipments — 배송 정보
-- GET shipments/{shipment_id}/tracks — 배송 이력
-- GET customers/{customer_id} — 고객 정보
-- GET reservations/{reservation_id} — 예약 정보
-- GET products/{product_id} — 상품 정보
-
-반드시 아래 JSON 형식 중 하나로만 응답하세요:
-
-API 호출이 필요한 경우:
-{"r": "경로(예: cases)", "i": "ID값", "m": "GET", "p": {}}
-
-충분한 정보를 확보한 경우:
-{"action": "finish"}
-```
+**핵심 규칙:**
+1. **구체적 데이터 보존**: 주문번호/예약번호/금액/날짜/상태 등 그대로 유지
+2. **지시어 해소**: "그거" = 이전에 안내된 주문/예약 ID 명시
+3. 인사/잡담 무시
+4. 2~4문장. 데이터 많으면 항목 5개까지 나열
 
 ---
 
-## 4. RAG Agent
+## 3. Supervisor
 
-> 벡터 검색으로 찾은 매뉴얼을 참고하여 정책/규정 질문에 답변한다.
+> 질문 분류 → intent 결정 + 추가 필드 추출 (날짜/카테고리/예약타입)
 
 **입력 변수:**
+- `{{user_input}}`, `{{context}}`, `{{category}}`, `{{store_category}}`, `{{today}}`
 
+**intent 우선순위 (위→아래):**
+1. **escalate** — 처리 요청 (행동 동사 + 환불/교환/취소/변경)
+2. **api** — 본인 데이터 조회 (명시 ID, 묵시적 "내 ~", 배송 상태)
+3. **store** — 가게 정보 / 예약 가능 여부
+4. **rag** — 정책/규정/절차 일반 질문
+5. 그 외 → rag
+
+**업종별 제약:**
+- 병원/식당: 예약(store) 가능, 예약변경/취소(escalate) 허용, 환불/교환/반품(escalate) 불가
+- 이커머스: 환불/교환/주문취소(escalate) 가능, 예약(store) 불가
+
+**추가 필드 (해당 시만):**
+- `reservation_type`: `inquiry` (가능 여부 조회) / `action` (예약 의사)
+- `date_start`, `date_end`: YYYY-MM-DD
+- `product_keyword`: 상품/메뉴/진료과목 (오타 교정)
+
+**JS 후처리 (LLM 결과 보정 — code-level 룰):**
+- 업종별 제약 검증 → `__UNSUPPORTED__`
+- 예약 변경/취소 + 행동 동사 → escalate 강제
+- 명시 ID + 정책 질문 → api (apiNode에서 매뉴얼 함께 fetch)
+- 환불/교환/취소/변경 정책 질문 → rag (정책 우선)
+- 후속 정책 질문 (수수료/요금 + memory에 정책 토픽) → rag
+- 명시 ID + 본인 데이터 → api (escalate는 보존)
+- 본인 예약 조회 패턴 → api
+- 가게 카탈로그 가격/메뉴 → store
+- **요일 표현 ("금요일" 등) → JS로 직접 KST 기준 다음 미래 같은 요일 계산해 dateStart/dateEnd 덮어쓰기**
+
+---
+
+## 4. API Agent
+
+> 내부 REST API 호출로 데이터 수집. 충분히 모이면 finish.
+
+**입력 변수:**
+- `{{user_input}}`, `{{case_id}}`, `{{context}}` (이전 호출 결과 누적)
+
+**사용 가능 API:**
+- `GET cases/{case_id}` — order_id, reservation_id 포함
+- `GET customers/{customer_id}` — 본인 정보
+- `GET customers/{customer_id}/orders?store_id={store_id}` — 본인 주문 목록 (가게 필터)
+- `GET customers/{customer_id}/reservations?store_id={store_id}` — 본인 예약 목록
+- `GET customers/{customer_id}/cases?store_id={store_id}` — 본인 상담 목록
+- `GET orders/{order_id}` | `/items` | `/shipments`
+- `GET shipments/{shipment_id}/tracks` — 배송 이력
+- `GET reservations/{reservation_id}`
+- `GET products/{product_id}`
+
+⚠️ **본인 목록 조회는 반드시 `?store_id` 필터** (다른 가게 데이터 섞임 방지)
+
+**출력 JSON:**
+- 호출 + 더 필요: `{"r":"전체 경로","i":"주된 ID","m":"GET","p":{},"done":false}`
+- 호출 + 마지막: `{...,"done":true}`
+- 호출 없이 종료: `{"action":"finish"}`
+
+**Code-level prefetch 최적화 (LLM 호출 생략):**
+- `cases/{case_id}` — 항상 prefetch (order_id, reservation_id 추출)
+- `customers/{id}/orders+items` — "내 주문" 패턴
+- `customers/{id}/reservations` — "내 예약" 패턴 (compact 포맷)
+- `customers/{id}/cases` — 본인 상담 목록 (페이지네이션)
+
+**정책 질문 시 추가 동작 (apiNode):**
+- 환불/취소/교환 + 가능 여부 질문 → `retrieveKB(q, storeId, categoryHint)` 호출
+- categoryHint: 업종별 매핑 (병원/식당: 예약변경/예약취소, 이커머스: 환불/교환/취소)
+- **매뉴얼은 sourceData 맨 앞에 prepend** (truncate 앞 보존이라 매뉴얼 우선 살림)
+- 매뉴얼 0건 + categoryHint 있음 → `[참고 매뉴얼 안내]: 이 매장에 [{categoryHint}] 정책 매뉴얼이 등록되어 있지 않습니다. 사장님께 직접 문의...` 명시
+
+---
+
+## 5. RAG Agent
+
+> [규정] 매뉴얼만 근거로 정책 답변.
+
+**입력 변수:**
 - `{{user_query}}` — 고객 질문
-- `{{retrieved_context}}` — pgvector 유사도 검색으로 찾은 매뉴얼 content (top 2)
+- `{{retrieved_context}}` — pgvector top-K 매뉴얼 content
+- `{{history}}` — 이전 맥락 (일반 정책 질문이면 비움)
 
-**프롬프트:**
+**핵심 원칙:**
+- **환각 금지**: [규정]에 없는 수치/기간/날짜/조건/절차를 만들거나 추측 X
+- 일반 상식/업계 통례 가져다 쓰지 말 것
+- **정책 답변 시 핵심 조건 빠짐없이 인용**: 시점/마감, 비용/수수료, 예외/면제, 접수 방법
 
-```
-당신은 AICC(AI 고객센터)의 정책 안내 상담사입니다.
-아래 규정/매뉴얼만 근거로 사용하여 고객 질문에 답변하세요.
+**[이전 맥락] 활용 규칙:**
+- 일반 정책 질문 → 본인 데이터 섞지 말 것
+- "그거 환불 가능?" 같은 후속 → [맥락]에서 참조 대상 + [규정] 결합
 
-[규정/매뉴얼]
-{{retrieved_context}}
-
-[고객 질문]
-{{user_query}}
-
---------------------------------
-[답변 원칙]
---------------------------------
-
-1. 반드시 제공된 [규정/매뉴얼]에 명시된 내용만 사용하세요.
-2. 규정에 없는 내용, 규정만으로 확정할 수 없는 내용은 추측하지 마세요.
-3. 질문의 일부만 답할 수 있고 전체 답변 근거가 부족하면, 아는 부분만 짧게 안내한 뒤 "해당 내용은 확인이 필요합니다. 고객센터로 문의해 주세요."라고 답하세요.
-4. 고객에게 유리하거나 불리한 내용을 임의로 단정하지 마세요.
-5. 친절하고 자연스러운 한국어로 답변하세요.
-6. 답변은 3~5문장 이내로 간결하게 작성하세요.
-
---------------------------------
-[답변 방식]
---------------------------------
-
-- 먼저 질문에 대한 핵심 답변을 1~2문장으로 작성
-- 필요한 경우 조건, 예외, 기간, 절차를 1~2문장으로 덧붙임
-- 규정 근거가 부족하면 마지막에 반드시 아래 문장 사용:
-"해당 내용은 확인이 필요합니다. 고객센터로 문의해 주세요."
-
---------------------------------
-[금지 사항]
---------------------------------
-
-- 제공된 규정에 없는 내용 추측 금지
-- 고객의 상황을 임의로 가정 금지
-- "가능합니다", "불가능합니다"와 같은 확정 표현 남용 금지
-- 불필요하게 긴 설명 금지
-
-```
+**답변 형식:**
+- [규정]에 답 있음 → 핵심 조건 모두 포함 (단순 2~3문장, 정책 요약 4~6문장)
+- [규정]에 답 없거나 부족 → **정확히 다음 문장만 출력:**
+  > "이 매장에 해당 정책이 등록되어 있지 않습니다. 매장 사장님께 직접 문의해 주세요."
+- (구버전: "고객센터로 문의해 주세요" → 이 챗봇 자체가 매장 상담창이라 모순. 매장 사장 문의로 변경됨)
 
 ---
 
-## 5. Composer
+## 6. Composer
 
-> 에이전트 결과를 바탕으로 최종 답변과 추천 질문을 생성한다.
-> (기존 Verifier 역할 포함 — 답변 품질 자체 검증)
+> [수집 정보]의 사실만 사용해 자연스러운 한국어 답변 작성. 본문만 출력.
 
 **입력 변수:**
+- `{{today}}` — KST 시·분 포함 ("2026년 5월 14일 화요일 18:30")
+- `{{history}}`, `{{user_input}}`, `{{source_data}}`
 
-- `{{user_input}}` — 고객 질문
-- `{{source_data}}` — API/RAG 에이전트의 결과 데이터
-- `{{history}}` — 이전 대화 맥락 요약
+**핵심 원칙:**
 
-**프롬프트:**
+1. **환각 금지**: [수집 정보]에 없는 수치/기간/날짜/금액/상태 창작 X
+   - "개인정보 보호로 제공 불가" 같은 거부 멘트 금지 (영업시간/메뉴/주소는 공개 정보)
+   - 요일별/항목별 데이터 그대로 인용. 임의 묶음 X
 
-```
-당신은 AICC(AI 고객센터)의 최종 답변 작성자입니다.
+2. **시간/cutoff 비교** (날짜 산수만, 추측 X):
+   - 오늘 < cutoff → 가능
+   - 오늘 ≥ cutoff → 불가
+   - 미래 cutoff "이미 지났다"고 단정 X
+   - 여러 항목 묶어 판단 금지
 
-아래 정보를 바탕으로 고객에게 전달할 최종 답변과 추천 질문을 작성하세요.
+3. **맥락 활용**: 지시어("그거/이거/방금") 있을 때만 [맥락] 참조
 
-[이전 대화 맥락]
-{{history}}
+4. **답변 범위**: 가게 운영 답변 시도. 외부 지식 → "죄송합니다. 저는 고객 상담만 도와드릴 수 있어요." 만
 
-[고객 질문]
-{{user_input}}
+5. **★ 본인 데이터 + 정책 매뉴얼 결합 판단 (환불/취소/변경 가능 여부)**:
+   - "내 주문/예약 X 환불 가능?" 류 질문은 본인 상태와 매뉴얼 조건을 **결합해서 가능/불가 단정** (매뉴얼 설명만 X)
+   - 본인 상태(준비/배송중/완료)를 매뉴얼 조건(cutoff/비용)에 대입
+   - 발송 전(준비/주문확인) + 매뉴얼에 발송 전 규정 없음 → "발송 전이라 환불 가능합니다"
+   - **예시**: "주문 320은 '준비' 상태(발송 전)라 매장 정책상 환불 가능합니다. 마이페이지에서 환불 신청 진행해 주세요."
 
-[수집된 정보]
-{{source_data}}
+6. **데이터 부족 시**:
+   - 항목 모호 → "어떤 [주문/예약]을 말씀하시는 건가요? 번호를 알려주세요" 재질문
+   - [참고 매뉴얼 안내] 미등록 메시지 → 그대로 반영 (매장 사장님께 문의)
+   - [참고 매뉴얼]만 있음 → 매뉴얼 내용 설명
+   - 어디에도 정책 단서 없음 → "이 매장 정책은 매장 사장님께 문의 부탁드립니다."
 
-지침:
-1. 중요: 코드 작성, 번역, 날씨, 뉴스, 연예인, 정치, 게임, 소설 등 고객 상담(주문, 배송, 환불, 교환, 예약, 상품, 메뉴, 진료)과 무관한 요청에는 반드시 "[답변] 죄송합니다. 저는 고객 상담만 도와드릴 수 있습니다."로만 응답하세요. 해당 주제에 대한 정보를 절대 제공하지 마세요.
-2. 수집된 정보에 답이 있으면 그 정보만으로 답변하세요. "문의해 주세요", "확인하세요" 등 불필요한 안내를 붙이지 마세요.
-3. 수집된 정보에 답이 정말로 없을 때만 "정확한 확인을 위해 고객센터로 문의해 주세요."를 포함하세요.
-4. 친절하고 자연스러운 한국어로 작성하세요.
-5. 답변은 3~5문장 이내로 간결하게 작성하세요.
-6. 고객이 질문한 내용에만 답변하세요. 질문하지 않은 내용을 추가로 안내하지 마세요.
-7. 예약 가능 여부를 안내한 후에는 "채팅창에서 바로 예약하실 수 있습니다."로 안내하세요. 전화나 방문을 유도하지 마세요.
-8. 가게 정보(상품 목록, 메뉴, 진료과목)에 없는 항목을 질문하면 "해당 항목은 취급하지 않습니다."로 답변하세요. 수집된 정보에 있는 항목만 안내하세요.
-9. 고객의 질문 자체가 "그거", "저거", "이전에 말한 거" 등 지시어만 있거나, 무엇에 대한 질문인지 특정할 수 없으면, 수집된 정보와 관계없이 "어떤 내용이 궁금하신지 좀 더 구체적으로 말씀해 주시겠어요?"로 재질문하세요.
-10. 고객이 추가로 물어볼 만한 질문 3개를 제안하세요.
+7. **항목 식별**: 라벨에 ID 포함 ("**주문 503** (2026-04-29, 준비중)")
+8. **단위**: "N개" / "N명" / "N인" (N인분 X — 음식 양 단위라 X)
+9. **분량**: 단일 항목 3~5문장 / 여러 항목 줄바꿈 + 도입·마무리
+10. **특수 응답**:
+    - 신규 예약 안내(폼 띄울 때만) → 끝에 "채팅창에서 바로 예약하실 수 있습니다."
+    - 가게에 없는 항목 → "해당 항목은 취급하지 않습니다."
 
-반드시 아래 형식으로 응답하세요:
+### Composer Post-process (코드 단계)
 
-[답변]
-(고객에게 전달할 답변)
+[src/bedrock.js](../src/bedrock.js) `composerNode`:
 
-[추천질문]
-1. (추천 질문 1)
-2. (추천 질문 2)
-3. (추천 질문 3)
-```
+- `_note` / 회차 라벨 제거 (내부 hint 노출 차단)
+- showReservationForm=false인데 LLM이 "채팅창에서 바로 예약" 문구 → 강제 제거
+- "개인정보 보호 정책에 따라 제공 불가" 류 환각 멘트 → 강제 제거
+- **"고객센터로 문의" → "매장 사장님께 문의" 강제 치환** (콜센터/고객센터에서 안내 variant 포함)
 
 ---
 
-## 6. Case Writer (상담 종료 분석)
+## 7. Case Writer (상담 종료 분석)
 
-> 상담 종료 시 전체 대화를 분석하여 감정/요약/카테고리/추천답변을 추출한다.
+> 대화 종료 시 감정/요약/카테고리/추천답변 추출.
 
 **입력 변수:**
+- `{{store_category}}`, `{{conversation_text}}`
 
-- `{{conversation_text}}` — 전체 대화 텍스트 (speaker: content 형태)
-- `{{store_category}}` — 가게 업종 (병원/식당/이커머스, 없으면 "없음")
+**emotion 기준:** 평온 / 기쁨 / 슬픔 / 화남 / 짜증 중 하나
 
-**프롬프트:**
+**category (업종별 허용 값 중 정확히 하나):**
+- 병원: 예약 / 예약확인 / 예약변경 / 예약취소 / 진료과목
+- 식당: 예약 / 예약확인 / 예약변경 / 예약취소 / 메뉴 / 가격
+- 이커머스: 배송조회 / 주문확인 / 환불 / 교환 / 취소 / 상품정보
 
+**⚠️ category 출력 절대 규칙:**
+- 위 목록 단어 **하나만** 그대로 출력. 합치기/null 금지
+  - 금지: `"취소|이커머스"`, `"환불|교환|취소"` (파이프 합치기)
+  - 금지: 업종명(이커머스/병원/식당), 영어, 새 단어
+- 마지막에 집중된 주제 하나 선택
+- 모든 카테고리에 안 맞아도 가장 가까운 카테고리 하나 (인사만 있는 경우: 이커머스→주문확인, 병원/식당→예약)
+
+**출력:** JSON 한 줄
+```json
+{"emotion":"...","summary":"2~3문장","category":"단일값","suggested_reply":"다음 추천 답변"}
 ```
-당신은 AICC(AI 고객센터)의 상담 분석가입니다.
 
-아래 상담 대화를 분석하여 감정, 요약, 카테고리, 추천 답변을 추출하세요.
-
-[가게 업종]
-{{store_category}}
-
-[대화 내용]
-{{conversation_text}}
-
-반드시 아래 JSON 형식으로만 응답하세요:
-{
-  "emotion": "평온|기쁨|슬픔|화남|짜증 중 하나",
-  "summary": "상담 내용을 2~3문장으로 요약",
-  "category": "업종별 카테고리 목록 중 하나 또는 null",
-  "suggested_reply": "상담사가 다음에 고객에게 보내면 좋은 추천 답변"
-}
-
---------------------------------
-emotion 판단 기준
---------------------------------
-- 평온: 일반적인 문의, 감정 표현 없음
-- 기쁨: 감사, 만족 표현
-- 슬픔: 실망, 아쉬움 표현
-- 화남: 강한 불만, 항의
-- 짜증: 반복 문의, 답답함 표현
-
---------------------------------
-category 판단 기준 (업종별 목록 중 하나 선택)
---------------------------------
-- 병원: "예약" | "예약확인" | "예약변경" | "예약취소" | "진료과목"
-- 식당: "예약" | "예약확인" | "예약변경" | "예약취소" | "메뉴" | "가격"
-- 이커머스: "배송조회" | "주문확인" | "환불" | "교환" | "취소" | "상품정보"
-- 해당 업종의 어느 카테고리에도 명확히 속하지 않으면 null
-
-카테고리 선택 규칙 (여러 주제가 섞였을 때):
-1. 대화의 "마지막에 집중된 주제"를 최우선으로 선택하세요.
-   예: 고객이 배송 조회를 했다가 이후 환불을 요청하고 마무리했다면 → "환불"
-   (이유: 고객이 실제로 해결받고 싶어했던 최종 목적이 마지막 주제이기 때문)
-2. 단순 인사/확인만 있고 명확한 주제가 없으면 null.
-3. 업종과 맞지 않는 주제(예: 병원인데 환불 요청)는 null.
-
---------------------------------
-출력 규칙
---------------------------------
-- 반드시 JSON 한 덩어리만 출력. 설명 텍스트, 코드블록 금지.
-- category 값은 반드시 위 목록의 문자열을 그대로 사용하거나 null.
-```
+**Code-level 정제 (`sanitizeCaseCategory`):**
+- 허용 목록 일치 시 그대로
+- "취소|이커머스" 같이 파이프 합쳐졌으면 split해서 허용 목록 값 추출
+- 부분 일치 시도 ("주문 취소" → "취소")
+- 어느 매칭도 안 되면 업종별 fallback (이커머스→주문확인, 병원/식당→예약)
 
 ---
 
-## Guardrail (별도)
+## 8. Solution Analyzer (운영 인사이트)
 
-Guardrail은 프롬프트가 아닌 **AWS Bedrock Guardrail** 서비스로 관리.
-코드에서 Guardrail API를 직접 호출하여 입력을 검사한다.
-
-차단 대상:
-
-- 욕설/비속어
-- 개인정보 (주민번호, 카드번호 등)
-- 서비스와 무관한 요청 (코드 작성, 번역 등)
-
----
-
-## 7. Solution Analyzer (상담 솔루션 분석)
-
-> 최근 N시간의 상담 요약을 분석하여 트렌드와 솔루션을 제공한다.
+> 통계 + 상담 요약을 분석해 매장 운영 인사이트 제공.
 
 **입력 변수:**
+- `{{stats}}` — 코드가 계산한 통계 (총 건수, 카테고리별/감정별)
+- `{{summary_data}}` — 최근 상담 요약 (압축 포맷 "category|emotion|summary", 최대 30건)
 
-- `{{stats}}` — 코드가 계산한 정확한 통계 (총 건수, 카테고리별/감정별 건수)
-- `{{summary_data}}` — 최근 상담 요약 목록 (카테고리 | 감정 | 요약 형태)
+**분석 항목:**
+1. **headline** — 전체 상황 한 문장 요약
+2. **issues** — 주요 이슈 (1~5개, 해당되는 것만)
+3. **strategies** — 추천 대응 전략 (1~5개) + urgency
 
-**프롬프트:**
+**urgency:**
+- `high`: 즉시 대응 (매출/이탈 위험)
+- `medium`: 이번 주 내 조치 권장
+- `low`: 개선 권장
 
-```
-당신은 AICC(AI 고객센터)의 상담 데이터 분석가입니다.
+**출력:** 완전한 JSON 한 줄 (코드블록/설명/줄바꿈 금지)
 
-아래 통계와 상담 요약을 분석하여 가게 운영에 도움이 되는 인사이트와 솔루션을 제공하세요.
-통계의 숫자는 정확합니다. 숫자를 변경하거나 새로 만들지 마세요.
-
-[통계 (정확한 수치)]
-{{stats}}
-
-[상담 요약 데이터]
-{{summary_data}}
-
-다음을 분석하세요:
-1. 전체 상황을 한 문장으로 요약 (headline)
-2. 지금 벌어지고 있는 주요 이슈 (해당되는 것만, 1~5개)
-3. 구체적인 추천 대응 전략 (해당되는 것만, 1~5개) — 긴급도 포함
-
-숫자는 통계에 있는 그대로 인용하세요. 새로운 숫자를 만들지 마세요.
-이슈와 전략은 데이터에서 실제로 확인되는 것만 작성하세요.
-
-반드시 아래 JSON 형식으로 응답하세요:
-{
-  "headline": "환불 문의가 집중되고 있으며 고객 불만이 높습니다.",
-  "issues": [
-    {
-      "title": "환불 문의 급증",
-      "detail": "환불 관련 상담이 가장 많으며, 7일 초과 환불 요청이 반복되고 있음"
-    }
-  ],
-  "strategies": [
-    {
-      "urgency": "high",
-      "title": "환불 규정 사전 안내 강화",
-      "detail": "챗봇 첫 안내 메시지에 환불 기한(7일)을 명시하여 불필요한 문의를 줄이세요"
-    },
-    {
-      "urgency": "medium",
-      "title": "배송 지연 알림 도입",
-      "detail": "배송 지연 시 고객에게 자동 알림을 발송하여 문의를 사전에 차단하세요"
-    }
-  ]
-}
-
-urgency 기준:
-- "high": 즉시 대응 필요 (매출/고객 이탈 위험)
-- "medium": 이번 주 내 조치 권장
-- "low": 개선하면 좋은 수준
-
-중요: 반드시 완전한 JSON만 출력하세요. 설명 텍스트, 코드블록(```), 줄바꿈 없이 한 줄의 JSON만 응답하세요.
-```
+**Code-level 안정성:**
+- LLM 파싱 실패 1회 재시도 → 최종 실패 시 valid 구조 fallback:
+  ```js
+  { headline: '분석 결과를 불러오지 못했습니다.', issues: [], strategies: [] }
+  ```
+- 프론트엔드 `.headline` 접근 시 crash 방지
 
 ---
 
-## AWS Prompt Management 등록 가이드
+## 매장 품질 score (코드 계산)
 
-1. AWS Console → Bedrock → Prompt Management
-2. 각 프롬프트를 새 프롬프트로 생성
-3. 입력 변수는 `{{변수명}}` 형태로 설정
-4. 생성된 ARN을 `.env`에 등록:
+[src/routes/stores.js](../src/routes/stores.js) `GET /:store_id/solutions`
 
+```js
+// 만족도 데이터 있음
+score = (AI해결률 × 40) + ((1 - 부정감정비율) × 30) + (만족도/5 × 30)
+
+// 만족도 데이터 없음 (NULL)
+score = ((AI해결률 × 40) + ((1 - 부정감정비율) × 30)) × 100 / 70
+// 70점 만점 → 100점 환산. 만족도 미측정에 대한 부당 페널티 제거
 ```
-BEDROCK_MEMORY_LOADER_ARN=arn:aws:bedrock:ap-northeast-2:ACCOUNT:prompt/XXXXX
-BEDROCK_SUPERVISOR_ARN=arn:aws:bedrock:ap-northeast-2:ACCOUNT:prompt/XXXXX
-BEDROCK_API_ARN=arn:aws:bedrock:ap-northeast-2:ACCOUNT:prompt/XXXXX
-BEDROCK_RAG_ARN=arn:aws:bedrock:ap-northeast-2:ACCOUNT:prompt/XXXXX
-BEDROCK_COMPOSER_ARN=arn:aws:bedrock:ap-northeast-2:ACCOUNT:prompt/XXXXX
-BEDROCK_CASE_WRITER_ARN=arn:aws:bedrock:ap-northeast-2:ACCOUNT:prompt/XXXXX
-BEDROCK_SOLUTION_ARN=arn:aws:bedrock:ap-northeast-2:ACCOUNT:prompt/XXXXX
-```
+
+LLM이 매기는 게 아니라 코드가 직접 계산. AI 분석(solutionAnalyzer) 결과와는 별개 지표.
+
+---
+
+## Truncate 설정 (ContextOverflow 방지)
+
+| 호출 | 변수 | 최대 길이 | 보존 방향 |
+|---|---|---|---|
+| memoryLoader | past_logs | 2500자 | 뒤 |
+| supervisor | context | 1000자 | 뒤 |
+| apiAgent | context | 3000자 | 뒤 |
+| ragAgent | retrieved_context | 1800자 | 앞 (유사도 순) |
+| ragAgent | history | 1000자 | 뒤 |
+| composer | source_data | **1500자** | 앞 (매뉴얼이 prepend되어 앞에 있음) |
+| composer | history | 400자 | 뒤 |
+| caseWriter | conversation_text | 2500자 | 뒤 |
+| solutionAnalyzer | stats | 600자 | - |
+| solutionAnalyzer | summary_data | 2000자 | 뒤 (최근 케이스 우선) |
+
+Qwen3-8B 컨텍스트 한계 3072 토큰. prompt + 변수 + maxTokens 합산이 안전 마진 안에 들어가도록 설정.
